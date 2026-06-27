@@ -31,7 +31,7 @@ class LoginBackend:
     def apply(self, manifest: Manifest, wallpaper: Path) -> None:
         if not _THEME_CONF_PATH.exists():
             return
-        self._write_conf(wallpaper)
+        self._write_conf(manifest, wallpaper)
 
     def dry_run_plan(self, wallpaper: Path) -> list[str]:
         if not _THEME_CONF_PATH.exists():
@@ -40,7 +40,7 @@ class LoginBackend:
             f"edit {_THEME_CONF_PATH}: set background={wallpaper}",
         ]
 
-    def _write_conf(self, wallpaper: Path) -> None:
+    def _write_conf(self, manifest: Manifest, wallpaper: Path) -> None:
         target = wallpaper.resolve()
         if not os.access(_THEME_CONF_PATH, os.W_OK):
             if os.geteuid() != 0:
@@ -53,8 +53,7 @@ class LoginBackend:
         else:
             sep = "" if text.endswith("\n") else "\n"
             new_text = f"{text}{sep}{_DEFAULT_COMMENT}\nbackground={target}\n"
-        tmp = _THEME_CONF_PATH.with_suffix(".conf.usurface.tmp")
-        from usurface.atomic import atomic_write_bytes
 
-        atomic_write_bytes(tmp, new_text.encode("utf-8"), mode=0o644)
-        os.replace(tmp, _THEME_CONF_PATH)
+        from usurface.manifest import write_tracked
+        write_tracked(manifest, _THEME_CONF_PATH, new_text.encode("utf-8"), mode=0o644)
+

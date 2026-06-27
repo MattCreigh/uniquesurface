@@ -42,6 +42,13 @@ def test_lock_apply_writes_greeter_keys(
     assert "Image" in image_argv
     assert any(arg.startswith("file://") for arg in image_argv)
 
+    # Manifest entry recorded for the config file.
+    m = Manifest(tmp_path / "manifest.jsonl")
+    entries = m.iter_entries()
+    assert len(entries) == 1
+    assert entries[0].path == str(Path("~/.config/kscreenlockerrc").expanduser())
+
+
 
 def test_lock_dry_run_does_not_call(fake_kwriteconfig: list[list[str]], tmp_path: Path) -> None:
     target = tmp_path / "wp.jpg"

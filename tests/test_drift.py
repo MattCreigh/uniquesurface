@@ -99,3 +99,27 @@ def test_strip_sentinels_removes_block() -> None:
     out = drift.strip_sentinels(text)
     assert "usurface:start" not in out
     assert "header" in out and "footer" in out
+
+
+def test_handle_drift_saves_backup_and_updates_pristine(
+    seeded_templates: Path, tmp_path: Path
+) -> None:
+    # 1. First run: No drift, returns None and makes no backup
+    backup = drift.handle_drift("sddm_login", seeded_templates)
+    assert backup is None
+
+    # 2. Modify the vendor file to simulate upstream change (drift)
+    original_text = seeded_templates.read_text(encoding="utf-8")
+    modified_text = original_text + "\n// modified upstream\n"
+    seeded_templates.write_text(modified_text, encoding="utf-8")
+
+    # 3. Second run: Drift detected. Should return backup path and resolve drift.
+    backup = drift.handle_drift("sddm_login", seeded_templates)
+    assert backup is not None
+    assert backup.exists()
+    assert backup.read_text(encoding="utf-8") == modified_text
+
+    # 4. Verify that templates were updated and check() now passes
+    report = drift.check("sddm_login", seeded_templates)
+    assert report.on_disk_matches_pristine is True
+

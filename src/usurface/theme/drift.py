@@ -82,6 +82,57 @@ def check(
     )
 
 
+def handle_drift(name: str, vendor_path: Path) -> Path | None:
+    """Check for drift. If detected:
+    1. Save the current file as `<path>.usurface.drift.<ts>`.
+    2. Re-extract a fresh pristine template from the running system (stripped of sentinels)
+       and update the stored pristine.
+    3. If they still don't match, raise RuntimeError.
+
+    Returns the path to the backup file if drift was handled, or None.
+    """
+    report = check(name, vendor_path)
+    if report.on_disk_matches_pristine:
+        return None
+
+    if not vendor_path.is_file():
+        return None
+
+    import shutil
+    from usurface.logging import get_logger
+
+    log = get_logger(__name__)
+
+    # 1. Save backup
+    ts = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
+    backup_path = vendor_path.parent / f"{vendor_path.name}.usurface.drift.{ts}"
+    log.warning("drift detected; creating backup", vendor_path=vendor_path, backup_path=backup_path)
+    try:
+        shutil.copy2(vendor_path, backup_path)
+    except PermissionError as exc:
+        raise PermissionError(
+            f"Cannot create backup {backup_path}: permission denied. "
+            "Please run as root/sudo to patch system files."
+        ) from exc
+
+    # 2. Re-extract pristine template (stripping sentinels first)
+    text = vendor_path.read_text(encoding="utf-8", errors="replace")
+    stripped_text = strip_sentinels(text)
+    stripped_bytes = stripped_text.encode("utf-8")
+    
+    extract.copy_pristine_bytes(name, stripped_bytes)
+
+    # 3. Check again
+    new_report = check(name, vendor_path)
+    if not new_report.on_disk_matches_pristine:
+        raise RuntimeError(
+            f"Drift check failed for '{name}' even after template re-extraction. "
+            f"Pristine SHA: {new_report.pristine_sha}, Stripped SHA: {new_report.on_disk_stripped_sha}"
+        )
+    return backup_path
+
+
 def on_disk_file_hash(path: Path) -> str | None:
     """Convenience wrapper used by tests."""
     return sha256_file(path)
+

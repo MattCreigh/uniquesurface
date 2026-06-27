@@ -19,7 +19,7 @@ from usurface.backends.lock import LockBackend
 from usurface.backends.login import LoginBackend
 from usurface.config import Config, expand_behaviour_paths
 from usurface.logging import get_logger
-from usurface.manifest import Manifest
+from usurface.manifest import Manifest, write_tracked
 from usurface.providers import FetchedImage, ProviderError, fetch_from_source, make_plugin_manager
 
 _log = get_logger(__name__)
@@ -85,16 +85,18 @@ def apply_to_surfaces(
 
     plan: list[str] = []
 
+    from usurface.theme import extract
+
     if dry_run:
         plan.append(f"fetch from provider '{expanded.surface.source.provider}'")
         plan.append(f"verify image (decode + re-encode)")
         plan.append(f"write {canonical}")
         plan.append(f"copy to {shared} (mode 0644)")
     else:
-        # Atomic writes.
-        atomic_write_bytes(canonical, clean_bytes, mode=0o644)
+        # Atomic writes with manifest tracking.
+        write_tracked(manifest, canonical, clean_bytes, mode=0o644)
         plan.append(f"wrote {canonical} ({len(clean_bytes)} bytes)")
-        atomic_write_bytes(shared, clean_bytes, mode=0o644)
+        write_tracked(manifest, shared, clean_bytes, mode=0o644)
         plan.append(f"wrote {shared} (mode 0644)")
 
     for backend in backends or default_backends():
@@ -103,4 +105,35 @@ def apply_to_surfaces(
         else:
             backend.apply(manifest, shared)
             plan.append(f"backend '{backend.name}' applied")
+
+    # QML Patching
+    if dry_run:
+        for name, vendor_path in extract.DEFAULT_TARGETS:
+            if vendor_path.is_file():
+                plan.append(f"patch QML {name} ({vendor_path}) with font/theme tokens")
+    else:
+        from usurface.theme.qml_patch import FontPatch, apply_font_tokens
+        from usurface.theme import drift
+
+        font_patch = FontPatch(
+            family=expanded.surface.fonts.family,
+            weight=expanded.surface.fonts.weight,
+            password_character=expanded.surface.fonts.password_character,
+            clock_format=expanded.surface.login.clock_format,
+        )
+
+        for name, vendor_path in extract.DEFAULT_TARGETS:
+            if vendor_path.is_file():
+                # Handle template drift if any
+                drift.handle_drift(name, vendor_path)
+                # Patch
+                msg = apply_font_tokens(
+                    name=name,
+                    vendor_path=vendor_path,
+                    manifest=manifest,
+                    patch=font_patch,
+                )
+                plan.append(f"QML backend '{name}' applied: {msg}")
+
     return plan
+

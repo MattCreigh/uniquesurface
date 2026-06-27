@@ -86,6 +86,26 @@ def test_apply_real_writes_files(
     from usurface.backends import login as login_mod
     monkeypatch.setattr(login_mod, "_THEME_CONF_PATH", fake_sddm)
 
+    # Mock extract targets and pristine template directory
+    from usurface import paths
+    from usurface.theme import extract as extract_mod
+    
+    fake_login_qml = tmp_path / "Login.qml"
+    fake_login_qml.write_text("import QtQuick\nItem { property string fontFamily: \"Lato\" }\n", encoding="utf-8")
+    
+    monkeypatch.setattr(paths, "templates_dir", lambda: tmp_path / "templates")
+    from usurface.theme.extract import copy_pristine_bytes
+    copy_pristine_bytes("sddm_login", b"import QtQuick\nItem { property string fontFamily: \"Lato\" }\n")
+
+    monkeypatch.setattr(
+        extract_mod,
+        "DEFAULT_TARGETS",
+        [
+            ("sddm_login", fake_login_qml),
+        ],
+    )
+
+
     # Mock Bing. Use a real 1x1 JPEG so Pillow can decode it.
     from PIL import Image
     import io
@@ -132,6 +152,25 @@ user_dir = "%s"
     assert (shared / "last_wallpaper.jpg").exists()
     # SDDM theme.conf got updated to point at the shared wallpaper.
     assert "last_wallpaper.jpg" in fake_sddm.read_text()
+
+    # The manifest has entries (wallpapers, theme.conf, and QML screens)
+    from usurface.manifest import Manifest
+    m = Manifest(tmp_path / "xdg_state" / "usurface" / "manifest.jsonl")
+    entries = m.iter_entries()
+    assert len(entries) > 0
+    # At least wallpaper writes, login config write, and QML write should be tracked.
+    paths_tracked = [e.path for e in entries]
+    assert any(str(user_state / "last_wallpaper.jpg") in p for p in paths_tracked)
+    assert any(str(shared / "last_wallpaper.jpg") in p for p in paths_tracked)
+    assert any(str(fake_sddm) in p for p in paths_tracked)
+    assert any(str(fake_login_qml) in p for p in paths_tracked)
+
+
+    # SDDM Login.qml is patched with Inter font
+    qml_content = fake_login_qml.read_text(encoding="utf-8")
+    assert "Inter" in qml_content
+    assert "/* @usurface:start */" in qml_content
+
 
 
 def test_status_runs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

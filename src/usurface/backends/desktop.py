@@ -24,6 +24,10 @@ class DesktopBackend:
         file_path = Path("~/.config/plasma-org.kde.plasma.desktop-appletsrc").expanduser()
         file_path.parent.mkdir(parents=True, exist_ok=True)
         uri = wallpaper.resolve().as_uri()
+        
+        from usurface.manifest import snapshot_previous_bytes, sha256_file
+        prev_sha, prev_snap = snapshot_previous_bytes(manifest, file_path)
+
         # We rely on kwriteconfig6 here so Plasma reads the change in
         # the canonical INI format; this is what Plasma itself writes.
         _kconfig.kwriteconfig(file=file_path, group=_GROUP, key=_PLUGIN_KEY, value=_DEFAULT_PLUGIN)
@@ -33,6 +37,16 @@ class DesktopBackend:
             path="/PlasmaShell",
             method="refreshWallpaper",
         )
+        
+        new_sha = sha256_file(file_path)
+        manifest.append(
+            op="write",
+            path=str(file_path),
+            prev_sha256=prev_sha,
+            new_sha256=new_sha,
+            prev_bytes_path=prev_snap,
+        )
+
 
     def dry_run_plan(self, wallpaper: Path) -> list[str]:
         file_path = Path("~/.config/plasma-org.kde.plasma.desktop-appletsrc").expanduser()

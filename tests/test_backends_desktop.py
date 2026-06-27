@@ -69,6 +69,12 @@ def test_desktop_apply_writes_expected_keys(
     assert len(fake_qdbus) == 1
     assert "refreshWallpaper" in fake_qdbus[0]
 
+    # Manifest entry recorded for the config file.
+    entries = manifest.iter_entries()
+    assert len(entries) == 1
+    assert entries[0].path == str(Path("~/.config/plasma-org.kde.plasma.desktop-appletsrc").expanduser())
+
+
 
 def test_desktop_dry_run_plan(
     fake_kwriteconfig: list[list[str]],
