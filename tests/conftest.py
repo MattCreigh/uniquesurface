@@ -1,0 +1,34 @@
+"""Shared pytest fixtures for usurface tests."""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+import pytest
+import respx
+
+
+@pytest.fixture(autouse=True)
+def _isolate_xdg_env(tmp_path, monkeypatch):
+    """Redirect XDG dirs to a tmp path so tests never touch real config."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg_config"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "xdg_state"))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "xdg_cache"))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    # Provide a writable "shared" wallpaper dir under tmp for tests.
+    monkeypatch.setenv("USURFACE_SHARED_DIR", str(tmp_path / "shared_wallpapers"))
+    yield
+
+
+@pytest.fixture
+def home_dir() -> Path:
+    """Return the per-test HOME directory created by the autouse fixture."""
+    return Path(os.environ["HOME"])
+
+
+@pytest.fixture
+def respx_mock():
+    """A respx mock router scoped to the test."""
+    with respx.mock(assert_all_called=False) as router:
+        yield router

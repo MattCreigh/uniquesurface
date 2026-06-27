@@ -1,0 +1,27 @@
+[surface]
+schema_version = 1
+
+[surface.source]
+provider = "bing"
+
+[surface.source.options]
+mkt = "en-US"
+resolution = "1920x1080"
+
+[surface.fonts]
+family = "Inter"
+weight = "Normal"
+password_character = "*"
+
+[surface.login]
+clock_format = "hh:mm"
+accent_color = "#1d99f3"
+show_user_list = true
+
+[surface.lock]
+on_idle_dim_seconds = 10
+suppress_wake_keypress = true
+
+[surface.behaviour]
+shared_dir = "/usr/local/share/wallpapers"
+user_dir = "~/.local/state/usurface"

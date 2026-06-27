@@ -1,0 +1,468 @@
+"""Click CLI entry point for uniquesurface."""
+
+from __future__ import annotations
+
+import os
+import sys
+from pathlib import Path
+
+import click
+
+from usurface import __version__
+from usurface.logging import configure_logging
+
+
+@click.group(invoke_without_command=True)
+@click.option("--version", is_flag=True, help="Print version and exit.")
+@click.option(
+    "--log-level",
+    default="INFO",
+    type=click.Choice(["DEBUG", "INFO", "WARNING", "ERROR"], case_sensitive=False),
+    help="Log level.",
+)
+@click.pass_context
+def main(ctx: click.Context, version: bool, log_level: str) -> None:
+    """uniquesurface — Unified Plasma 6 surface set manager."""
+    configure_logging(log_level)
+    if version or ctx.invoked_subcommand is None:
+        click.echo(f"uniquesurface {__version__}")
+
+
+# --- apply -------------------------------------------------------------
+
+
+@main.command()
+@click.option("--dry-run", is_flag=True, help="Print the plan without writing.")
+@click.option(
+    "--config",
+    "config_path",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Path to config file (default: ~/.config/usurface/config.toml).",
+)
+def apply(dry_run: bool, config_path: Path | None) -> None:
+    """Apply the configured wallpaper to desktop, lock, and login."""
+    from usurface import paths
+    from usurface.config import load_config
+    from usurface.manifest import Manifest
+    from usurface.orchestrator import apply_to_surfaces
+
+    if config_path is None and not paths.config_file().exists():
+        click.echo(
+            f"no config at {paths.config_file()}; run `usurface config init`",
+            err=True,
+        )
+        sys.exit(2)
+
+    cfg = load_config(config_path)
+    
+    from usurface.theme.font_install import is_installed
+    if not is_installed(cfg.surface.fonts.family):
+        click.echo(f"Warning: font family '{cfg.surface.fonts.family}' not found by fontconfig.", err=True)
+        
+    manifest = Manifest()
+    plan = apply_to_surfaces(cfg, manifest=manifest, dry_run=dry_run)
+    for line in plan:
+        click.echo(line)
+    if not dry_run:
+        click.echo(
+            "To see the new wallpaper on the SDDM login screen, "
+            "log out (SDDM caches theme files at startup)."
+        )
+
+
+# --- restore -----------------------------------------------------------
+
+
+@main.command()
+@click.option(
+    "--to",
+    "to_timestamp",
+    default=None,
+    help="Stop restoring at this ISO timestamp.",
+)
+@click.option("--yes", is_flag=True, help="Skip the confirmation prompt.")
+def restore(to_timestamp: str | None, yes: bool) -> None:
+    """Revert every recorded change."""
+    from usurface.manifest import Manifest, restore as _restore
+
+    m = Manifest()
+    if not m.path.exists():
+        click.echo("manifest log is empty; nothing to restore.")
+        return
+    if not yes and not click.confirm(
+        f"Restore {len(m.iter_entries())} recorded change(s)?"
+    ):
+        click.echo("aborted.")
+        return
+    count = _restore(m, to=to_timestamp)
+    click.echo(f"restored {count} file(s).")
+
+
+# --- status ------------------------------------------------------------
+
+
+@main.command()
+def status() -> None:
+    """Show the current configuration and last apply status."""
+    from usurface import paths
+    from usurface.manifest import Manifest
+
+    cfg = paths.config_file()
+    click.echo(f"config: {cfg} {'(present)' if cfg.exists() else '(missing)'}")
+    m = Manifest()
+    head = m.head(5)
+    click.echo(f"manifest entries: {len(m.iter_entries())} (showing last {len(head)})")
+    for entry in head:
+        click.echo(f"  {entry.ts} {entry.op:6s} {entry.path}")
+    from usurface.theme.font_install import is_installed
+
+    click.echo(
+        f"font 'Inter' resolves via fontconfig: "
+        f"{'yes' if is_installed() else 'no'}"
+    )
+
+
+# --- config -----------------------------------------------------------
+
+
+@main.group()
+def config() -> None:
+    """Inspect and edit the user configuration."""
+
+
+@config.command("show")
+@click.option(
+    "--config",
+    "config_path",
+    type=click.Path(exists=True, path_type=Path),
+    default=None,
+)
+def config_show(config_path: Path | None) -> None:
+    """Print the active configuration."""
+    from usurface.config import load_config
+
+    cfg = load_config(config_path)
+    click.echo(cfg.model_dump_json(indent=2))
+
+
+@config.command("validate")
+@click.option(
+    "--config",
+    "config_path",
+    type=click.Path(exists=True, path_type=Path),
+    default=None,
+)
+def config_validate(config_path: Path | None) -> None:
+    """Validate the config file; exit 0 if valid, 1 otherwise."""
+    from usurface.config import load_config
+
+    try:
+        load_config(config_path)
+    except Exception as exc:  # noqa: BLE001
+        click.echo(f"invalid: {exc}", err=True)
+        sys.exit(1)
+    click.echo("ok")
+
+
+@config.command("init")
+@click.option("--force", is_flag=True, help="Overwrite an existing config.")
+def config_init(force: bool) -> None:
+    """Write a starter config to the default location."""
+    from usurface import paths
+    from usurface.atomic import atomic_write_text
+
+    target = paths.config_file()
+    if target.exists() and not force:
+        click.echo(f"{target} already exists; pass --force to overwrite.")
+        sys.exit(2)
+
+    text = """\
+[surface]
+schema_version = 1
+
+[surface.source]
+provider = "bing"
+
+[surface.source.options]
+mkt = "en-US"
+resolution = "1920x1080"
+
+[surface.fonts]
+family = "Inter"
+weight = "Normal"
+password_character = "*"
+
+[surface.login]
+clock_format = "hh:mm"
+accent_color = "#1d99f3"
+show_user_list = true
+
+[surface.lock]
+on_idle_dim_seconds = 10
+suppress_wake_keypress = true
+
+[surface.behaviour]
+shared_dir = "/usr/local/share/wallpapers"
+user_dir = "~/.local/state/usurface"
+"""
+    atomic_write_text(target, text, mode=0o644)
+    click.echo(f"wrote {target}")
+
+
+# --- provider ---------------------------------------------------------
+
+
+@main.group()
+def provider() -> None:
+    """Inspect available wallpaper providers."""
+
+
+@provider.command("list")
+def provider_list() -> None:
+    """List registered providers."""
+    from usurface.providers import list_providers, make_plugin_manager
+
+    pm = make_plugin_manager()
+    for info in list_providers(pm):
+        marker = "[built-in]" if info.builtin else "[plugin]"
+        click.echo(f"  {info.name:14s} {marker:12s} {info.description}")
+
+
+@provider.command("info")
+@click.argument("name")
+def provider_info(name: str) -> None:
+    """Show details about one provider."""
+    from usurface.providers import list_providers, make_plugin_manager
+
+    pm = make_plugin_manager()
+    for info in list_providers(pm):
+        if info.name == name:
+            click.echo(f"name:        {info.name}")
+            click.echo(f"description: {info.description}")
+            click.echo(f"built-in:    {info.builtin}")
+            return
+    click.echo(f"no provider named {name!r}", err=True)
+    sys.exit(2)
+
+
+# --- qml-update-templates ---------------------------------------------
+
+
+@main.command("qml-update-templates")
+@click.option("--yes", is_flag=True, help="Skip confirmation.")
+def qml_update_templates(yes: bool) -> None:
+    """Re-extract pristine QML templates from the system."""
+    from usurface.theme import extract
+
+    if not yes and not click.confirm(
+        "Overwrite stored pristine templates with current vendor QML?"
+    ):
+        click.echo("aborted.")
+        return
+    written = extract.extract()
+    for path in written:
+        click.echo(f"wrote {path}")
+
+
+# --- doctor -----------------------------------------------------------
+
+
+@main.command()
+def doctor() -> None:
+    """Run health checks on the install."""
+    from usurface import paths
+    from usurface.theme.font_install import is_installed
+
+    ok = True
+
+    cfg = paths.config_file()
+    if cfg.exists():
+        click.echo(f"[ok]   config: {cfg}")
+    else:
+        click.echo(f"[warn] config missing: {cfg}")
+        ok = False
+
+    m = paths.manifest_file()
+    click.echo(f"[ok]   manifest log: {m}")
+
+    sw = paths.shared_wallpapers_dir()
+    if sw.is_dir() and os.access(sw, os.W_OK):
+        click.echo(f"[ok]   shared dir writable: {sw}")
+    else:
+        click.echo(f"[warn] shared dir not writable: {sw}")
+        ok = False
+
+    if is_installed("Inter"):
+        click.echo("[ok]   font 'Inter' resolves via fontconfig")
+    else:
+        click.echo("[warn] font 'Inter' not found by fontconfig")
+        ok = False
+
+    from usurface.theme import extract, drift
+
+    tdir = paths.templates_dir()
+    if tdir.is_dir():
+        for name, vendor_path in extract.DEFAULT_TARGETS:
+            if not vendor_path.is_file():
+                continue
+            rep = drift.check(name, vendor_path)
+            if rep.on_disk_matches_pristine:
+                click.echo(f"[ok]   '{name}': no drift")
+            else:
+                click.echo(f"[warn] '{name}': DRIFT DETECTED (on disk doesn't match stored pristine)")
+                ok = False
+            sha = rep.pristine_sha
+            click.echo(
+                f"[info] stored pristine '{name}': "
+                f"sha {sha[:12] if sha else 'missing'}…"
+            )
+    else:
+        click.echo("[info] no stored pristine QML templates (run `usurface install`)")
+
+    sys.exit(0 if ok else 1)
+
+
+# --- migrate ----------------------------------------------------------
+
+
+@main.command("migrate-from-shell")
+@click.option("--dry-run", is_flag=True, help="Print the plan without writing.")
+def migrate_from_shell(dry_run: bool) -> None:
+    """Detect existing shell-based setup and generate a starter config."""
+    from usurface import paths
+
+    detected = _detect_existing_setup()
+    if not detected:
+        click.echo("No existing shell-based usurface setup detected.")
+        return
+    click.echo("Detected:")
+    for key, value in detected.items():
+        click.echo(f"  {key}: {value}")
+    target = paths.config_file()
+    if dry_run:
+        click.echo(f"[dry-run] would write starter config to {target}")
+        return
+    if target.exists():
+        click.echo(
+            f"{target} already exists; refusing to overwrite.",
+            err=True,
+        )
+        sys.exit(2)
+    from usurface.config import dump_config
+    from usurface.schema import (
+        Behaviour,
+        Config,
+        Fonts,
+        Lock,
+        Login,
+        Source,
+        Surface,
+    )
+
+    cfg = Config(
+        surface=Surface(
+            source=Source(
+                provider="bing",
+                options={"mkt": "en-US", "resolution": "1920x1080"},
+            ),
+            fonts=Fonts(),
+            login=Login(),
+            lock=Lock(),
+            behaviour=Behaviour(
+                shared_dir=detected.get("shared_dir", "/usr/local/share/wallpapers")
+            ),
+        )
+    )
+    dump_config(cfg)
+    click.echo(f"wrote {target}")
+
+
+# --- install ----------------------------------------------------------
+
+
+@main.command()
+@click.option("--yes", is_flag=True, help="Skip confirmation prompts.")
+def install(yes: bool) -> None:
+    """Install Inter font, create shared dir, enable systemd timer.
+
+    Requires root for the font install and shared-dir creation steps.
+    """
+    from usurface import paths, systemd
+    from usurface.theme import extract
+    from usurface.theme.font_install import install as install_font
+
+    click.echo("==> Extracting pristine QML templates")
+    written = extract.extract()
+    for p in written:
+        click.echo(f"    {p}")
+
+    click.echo("==> Installing Inter font (root recommended)")
+    if not yes and not click.confirm(
+        "Install Inter font to /usr/local/share/fonts? (needs sudo)"
+    ):
+        click.echo("    skipped (login screen will use system default font)")
+    else:
+        try:
+            result = install_font()
+            click.echo(f"    installed to {result.installed_to}")
+            if result.ran_fc_cache:
+                click.echo("    ran fc-cache -f")
+        except FileNotFoundError as exc:
+            click.echo(f"    font install failed: {exc}", err=True)
+
+    click.echo("==> Creating shared wallpaper directory")
+    sw = paths.shared_wallpapers_dir()
+    try:
+        sw.mkdir(parents=True, exist_ok=True)
+        click.echo(f"    {sw}")
+    except PermissionError:
+        click.echo(f"    failed to create {sw}; run as root", err=True)
+
+    click.echo("==> Installing systemd timer")
+    svc, tmr = systemd.install()
+    click.echo(f"    wrote {svc}")
+    click.echo(f"    wrote {tmr}")
+    ok, msg = systemd.enable_and_start()
+    if ok:
+        click.echo(f"    {msg}")
+    else:
+        click.echo(f"    systemd enable failed: {msg}", err=True)
+
+
+@main.command()
+@click.option("--yes", is_flag=True, help="Skip confirmation prompts.")
+def uninstall(yes: bool) -> None:
+    """Disable systemd timer and remove unit files."""
+    from usurface import systemd, paths
+    if not yes and not click.confirm("Disable and remove systemd user units?"):
+        click.echo("aborted.")
+        return
+    ok, msg = systemd.disable_and_stop()
+    if ok:
+        click.echo(f"    {msg}")
+    else:
+        click.echo(f"    systemd disable failed: {msg}", err=True)
+
+    svc = paths.config_dir() / "systemd" / "user" / "usurface-pull.service"
+    tmr = paths.config_dir() / "systemd" / "user" / "usurface-pull.timer"
+    for p in (svc, tmr):
+        if p.exists():
+            p.unlink()
+            click.echo(f"    removed {p}")
+
+
+def _detect_existing_setup() -> dict[str, str]:
+    """Look for the legacy shell-based pieces on this system."""
+    out: dict[str, str] = {}
+    script = Path("/usr/local/bin/bing-potd.sh")
+    if script.exists():
+        out["shell_script"] = str(script)
+    timer = Path("~/.config/systemd/user/bing-potd.timer").expanduser()
+    if timer.exists():
+        out["systemd_timer"] = str(timer)
+    return out
+
+
+if __name__ == "__main__":
+    main()
