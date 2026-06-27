@@ -8,6 +8,10 @@
   [![Tests](https://img.shields.io/badge/tests-77%20passed-success)](https://pytest.org/)
 </div>
 
+> [!WARNING]
+> **AI-Generated Codebase**
+> This entire architecture and codebase—including the strict schema validation, append-only undo manifest, sentinel-based QML patching, and tests—was generated autonomously by generative AI (Google DeepMind's models) in under an hour. While it passes all tests and is functionally robust, please review the code before deploying it in mission-critical environments.
+
 One CLI, one configuration file, **three surfaces**: your desktop wallpaper, lock screen wallpaper, and SDDM login screen wallpaper, beautifully synchronized.
 
 ## 🌟 Why `uniquesurface`?
