@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from usurface.manifest import Manifest, sha256_bytes, write_tracked
-from usurface.theme import drift, extract
+from usurface.theme import extract
 
 # Sentinel markers; anything between them is replaced wholesale.
 SENTINEL_START = "/* @usurface:start */"

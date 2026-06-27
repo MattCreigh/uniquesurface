@@ -18,7 +18,6 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from usurface import paths
 from usurface.manifest import sha256_bytes, sha256_file
 from usurface.theme import extract
 

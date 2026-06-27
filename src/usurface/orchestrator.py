@@ -11,8 +11,6 @@ from pathlib import Path
 
 from PIL import Image, UnidentifiedImageError
 
-from usurface import paths
-from usurface.atomic import atomic_write_bytes
 from usurface.backends.base import Backend
 from usurface.backends.desktop import DesktopBackend
 from usurface.backends.lock import LockBackend
@@ -89,7 +87,7 @@ def apply_to_surfaces(
 
     if dry_run:
         plan.append(f"fetch from provider '{expanded.surface.source.provider}'")
-        plan.append(f"verify image (decode + re-encode)")
+        plan.append("verify image (decode + re-encode)")
         plan.append(f"write {canonical}")
         plan.append(f"copy to {shared} (mode 0644)")
     else:

@@ -61,14 +61,17 @@ class ProviderHooks:
     @hookspec
     def usurface_provider_name(self) -> str:
         """Return the short provider name (matches ``[surface.source].provider``)."""
+        ...
 
     @hookspec
     def usurface_provider_info(self) -> ProviderInfo:
         """Return metadata describing this provider."""
+        ...
 
     @hookspec(firstresult=True)
     def usurface_provider_fetch(self, options: dict[str, Any]) -> FetchedImage:
         """Fetch or generate an image; return its bytes."""
+        ...
 
 
 class _BuiltinPlugin:
