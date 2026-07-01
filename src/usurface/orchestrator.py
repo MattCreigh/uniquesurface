@@ -11,14 +11,19 @@ from pathlib import Path
 
 from PIL import Image, UnidentifiedImageError
 
-from usurface.backends.base import Backend
+from usurface.backends.base import Backend, BackendError
 from usurface.backends.desktop import DesktopBackend
 from usurface.backends.lock import LockBackend
 from usurface.backends.login import LoginBackend
 from usurface.config import Config, expand_behaviour_paths
 from usurface.logging import get_logger
 from usurface.manifest import Manifest, write_tracked
-from usurface.providers import FetchedImage, ProviderError, fetch_from_source, make_plugin_manager
+from usurface.providers import (
+    FetchedImage,
+    ProviderError,
+    fetch_from_source,
+    make_plugin_manager,
+)
 
 _log = get_logger(__name__)
 
@@ -67,6 +72,11 @@ def apply_to_surfaces(
     """Run the apply pipeline for ``config``.
 
     Returns a list of human-readable lines describing what was done.
+
+    Errors from individual backends are caught and reported as warnings
+    so that one failing surface (e.g. SDDM when not run as root) does
+    not prevent the other surfaces from being updated. Unexpected
+    exceptions still propagate.
     """
     expanded = expand_behaviour_paths(config)
     user_dir = Path(expanded.surface.behaviour.user_dir).expanduser()
@@ -101,8 +111,14 @@ def apply_to_surfaces(
         if dry_run:
             plan.extend(backend.dry_run_plan(shared))
         else:
-            backend.apply(manifest, shared)
-            plan.append(f"backend '{backend.name}' applied")
+            try:
+                backend.apply(manifest, shared)
+                plan.append(f"backend '{backend.name}' applied")
+            except BackendError as exc:
+                plan.append(f"backend '{backend.name}' FAILED: {exc}")
+                if exc.hint:
+                    plan.append(f"  hint: {exc.hint}")
+                _log.warning("backend_failed", backend=backend.name, error=str(exc))
 
     # QML Patching
     if dry_run:
@@ -121,7 +137,9 @@ def apply_to_surfaces(
         )
 
         for name, vendor_path in extract.DEFAULT_TARGETS:
-            if vendor_path.is_file():
+            if not vendor_path.is_file():
+                continue
+            try:
                 # Handle template drift if any
                 drift.handle_drift(name, vendor_path)
                 # Patch
@@ -132,6 +150,25 @@ def apply_to_surfaces(
                     patch=font_patch,
                 )
                 plan.append(f"QML backend '{name}' applied: {msg}")
+            except BackendError as exc:
+                plan.append(f"QML backend '{name}' FAILED: {exc}")
+                if exc.hint:
+                    plan.append(f"  hint: {exc.hint}")
+                _log.warning("qml_backend_failed", backend=name, error=str(exc))
+            except OSError as exc:
+                # Drift backup creation or atomic write failed (likely
+                # permission). Treat as a backend failure.
+                msg = f"{vendor_path}: {exc}"
+                hint = (
+                    "QML patching needs to write to system paths. "
+                    "Re-run with sudo, e.g.  sudo usurface apply"
+                )
+                plan.append(f"QML backend '{name}' FAILED: {msg}")
+                plan.append(f"  hint: {hint}")
+                _log.warning(
+                    "qml_backend_failed_oserror",
+                    backend=name,
+                    error=msg,
+                )
 
     return plan
-

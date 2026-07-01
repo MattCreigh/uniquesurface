@@ -23,11 +23,15 @@ DEFAULT_TARGETS: list[tuple[str, Path]] = [
     ("sddm_login", Path("/usr/share/sddm/themes/breeze/Login.qml")),
     (
         "plasma_lockscreen_mainblock",
-        Path("/usr/share/plasma/shells/org.kde.plasma.desktop/contents/lockscreen/MainBlock.qml"),
+        Path(
+            "/usr/share/plasma/shells/org.kde.plasma.desktop/contents/lockscreen/MainBlock.qml"
+        ),
     ),
     (
         "plasma_lockscreen_ui",
-        Path("/usr/share/plasma/shells/org.kde.plasma.desktop/contents/lockscreen/LockScreenUi.qml"),
+        Path(
+            "/usr/share/plasma/shells/org.kde.plasma.desktop/contents/lockscreen/LockScreenUi.qml"
+        ),
     ),
 ]
 

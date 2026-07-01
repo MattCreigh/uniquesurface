@@ -46,7 +46,9 @@ def test_drift_sentinel_region_ignored(seeded_templates: Path) -> None:
     """If the only change is between our sentinels, drift must NOT fire."""
     original_text = seeded_templates.read_text()
     sentinel_block = (
-        "/* @usurface:start */\n" "QtObject { property string a: 'b' }\n" "/* @usurface:end */"
+        "/* @usurface:start */\n"
+        "QtObject { property string a: 'b' }\n"
+        "/* @usurface:end */"
     )
     modified = original_text.rstrip("\n") + "\n\n" + sentinel_block + "\n"
     seeded_templates.write_text(modified, encoding="utf-8")
@@ -73,7 +75,6 @@ def test_drift_re_extract_resolves_when_vendor_changed(
     new_text = seeded_templates.read_text() + "\n// changed upstream\n"
     seeded_templates.write_text(new_text, encoding="utf-8")
     # Update the stored pristine to the new content too.
-    from usurface.theme import extract
     extract.copy_pristine_bytes("sddm_login", new_text.encode("utf-8"))
     report = drift.check("sddm_login", seeded_templates)
     assert report.on_disk_matches_pristine is True
@@ -122,4 +123,3 @@ def test_handle_drift_saves_backup_and_updates_pristine(
     # 4. Verify that templates were updated and check() now passes
     report = drift.check("sddm_login", seeded_templates)
     assert report.on_disk_matches_pristine is True
-

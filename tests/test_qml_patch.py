@@ -77,7 +77,10 @@ def test_second_patch_replaces_only_block(seeded_login: Path, tmp_path: Path) ->
     assert "Bold" in text
     assert "HH:mm" in text
     # Snapshot prepended unchanged header.
-    assert snapshot.split(qml_patch.SENTINEL_START)[0] == text.split(qml_patch.SENTINEL_START)[0]
+    assert (
+        snapshot.split(qml_patch.SENTINEL_START)[0]
+        == text.split(qml_patch.SENTINEL_START)[0]
+    )
 
 
 def test_remove_sentinels_restores_pristine(seeded_login: Path, tmp_path: Path) -> None:
@@ -88,9 +91,7 @@ def test_remove_sentinels_restores_pristine(seeded_login: Path, tmp_path: Path) 
         manifest=m,
         patch=qml_patch.FontPatch("Inter", "Normal", "*", "hh:mm"),
     )
-    qml_patch.remove_sentinels(
-        name="sddm_login", vendor_path=seeded_login, manifest=m
-    )
+    qml_patch.remove_sentinels(name="sddm_login", vendor_path=seeded_login, manifest=m)
     text = seeded_login.read_text(encoding="utf-8")
     assert text == SAMPLE_QML
 
@@ -98,12 +99,18 @@ def test_remove_sentinels_restores_pristine(seeded_login: Path, tmp_path: Path) 
 def test_no_op_when_patch_unchanged(seeded_login: Path, tmp_path: Path) -> None:
     m = Manifest(tmp_path / "manifest.jsonl")
     p = qml_patch.FontPatch("Inter", "Normal", "*", "hh:mm")
-    qml_patch.apply_font_tokens(name="sddm_login", vendor_path=seeded_login, manifest=m, patch=p)
-    msg = qml_patch.apply_font_tokens(name="sddm_login", vendor_path=seeded_login, manifest=m, patch=p)
+    qml_patch.apply_font_tokens(
+        name="sddm_login", vendor_path=seeded_login, manifest=m, patch=p
+    )
+    msg = qml_patch.apply_font_tokens(
+        name="sddm_login", vendor_path=seeded_login, manifest=m, patch=p
+    )
     assert "no change" in msg
 
 
-def test_requires_pristine_template(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_requires_pristine_template(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     templates = tmp_path / "templates"
     templates.mkdir()
     monkeypatch.setattr(paths, "templates_dir", lambda: templates)

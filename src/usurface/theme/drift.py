@@ -105,7 +105,11 @@ def handle_drift(name: str, vendor_path: Path) -> Path | None:
     # 1. Save backup
     ts = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
     backup_path = vendor_path.parent / f"{vendor_path.name}.usurface.drift.{ts}"
-    log.warning("drift detected; creating backup", vendor_path=vendor_path, backup_path=backup_path)
+    log.warning(
+        "drift detected; creating backup",
+        vendor_path=vendor_path,
+        backup_path=backup_path,
+    )
     try:
         shutil.copy2(vendor_path, backup_path)
     except PermissionError as exc:
@@ -118,7 +122,7 @@ def handle_drift(name: str, vendor_path: Path) -> Path | None:
     text = vendor_path.read_text(encoding="utf-8", errors="replace")
     stripped_text = strip_sentinels(text)
     stripped_bytes = stripped_text.encode("utf-8")
-    
+
     extract.copy_pristine_bytes(name, stripped_bytes)
 
     # 3. Check again
@@ -134,4 +138,3 @@ def handle_drift(name: str, vendor_path: Path) -> Path | None:
 def on_disk_file_hash(path: Path) -> str | None:
     """Convenience wrapper used by tests."""
     return sha256_file(path)
-

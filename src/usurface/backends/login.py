@@ -12,6 +12,7 @@ import os
 import re
 from pathlib import Path
 
+from usurface.backends.base import BackendError
 from usurface.manifest import Manifest
 
 _BG_LINE_RE = re.compile(r"^(\s*background\s*=\s*).*$", re.MULTILINE)
@@ -42,11 +43,14 @@ class LoginBackend:
 
     def _write_conf(self, manifest: Manifest, wallpaper: Path) -> None:
         target = wallpaper.resolve()
-        if not os.access(_THEME_CONF_PATH, os.W_OK):
-            if os.geteuid() != 0:
-                raise PermissionError(
-                    f"{_THEME_CONF_PATH} is not writable and we are not root"
-                )
+        if not _can_write(_THEME_CONF_PATH):
+            raise BackendError(
+                f"{_THEME_CONF_PATH} is not writable",
+                hint=(
+                    "the SDDM theme file requires root. Re-run with sudo, e.g.\n"
+                    "  sudo usurface apply"
+                ),
+            )
         text = _THEME_CONF_PATH.read_text(encoding="utf-8")
         if _BG_LINE_RE.search(text):
             new_text = _BG_LINE_RE.sub(rf"\g<1>{target}", text)
@@ -55,5 +59,16 @@ class LoginBackend:
             new_text = f"{text}{sep}{_DEFAULT_COMMENT}\nbackground={target}\n"
 
         from usurface.manifest import write_tracked
+
         write_tracked(manifest, _THEME_CONF_PATH, new_text.encode("utf-8"), mode=0o644)
 
+
+def _can_write(path: Path) -> bool:
+    """Return True if the current process can write to ``path``.
+
+    Checks the parent directory as well, because the file may be
+    replaced atomically (which requires write access on the directory).
+    """
+    if path.exists():
+        return os.access(path, os.W_OK)
+    return os.access(path.parent, os.W_OK)

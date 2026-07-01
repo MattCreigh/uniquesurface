@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import os
 
 import pytest
+from pathlib import Path
 
 from usurface import paths
 
@@ -24,7 +24,9 @@ def test_cache_dir_under_xdg(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
     assert paths.cache_dir() == tmp_path / "usurface"
 
 
-def test_shared_dir_uses_override(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_shared_dir_uses_override(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     custom = tmp_path / "custom-share"
     monkeypatch.setenv("USURFACE_SHARED_DIR", str(custom))
     assert paths.shared_wallpapers_dir() == custom

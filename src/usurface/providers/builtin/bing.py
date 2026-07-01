@@ -55,9 +55,7 @@ def fetch(options: dict[str, Any]) -> FetchedImage:
         image_meta = meta["images"][0]
         rel_url = image_meta["url"]
     except (KeyError, IndexError, TypeError) as exc:
-        raise ProviderError(
-            f"unexpected Bing metadata shape: {meta!r}"
-        ) from exc
+        raise ProviderError(f"unexpected Bing metadata shape: {meta!r}") from exc
 
     image_url = "https://www.bing.com" + rel_url
 

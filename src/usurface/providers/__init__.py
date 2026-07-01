@@ -1,3 +1,10 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Protocol
+
+import pluggy
+
 """Provider plugin system.
 
 A provider returns the bytes of an image suitable for use as the
@@ -11,12 +18,6 @@ distribution name is *explicitly* named in the user's config; the
 implementation here trusts that list.
 """
 
-from __future__ import annotations
-
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Protocol
-
-import pluggy
 
 if TYPE_CHECKING:
     from usurface.schema import Source
@@ -50,9 +51,17 @@ class ProviderError(RuntimeError):
 class ProviderPlugin(Protocol):
     """Structural interface a provider plugin must satisfy."""
 
-    def usurface_provider_name(self) -> str: ...
-    def usurface_provider_info(self) -> ProviderInfo: ...
-    def usurface_provider_fetch(self, options: dict[str, Any]) -> FetchedImage: ...
+    def usurface_provider_name(self) -> str:
+        """Return the provider name."""
+        raise NotImplementedError
+
+    def usurface_provider_info(self) -> ProviderInfo:
+        """Return provider metadata."""
+        raise NotImplementedError
+
+    def usurface_provider_fetch(self, options: dict[str, Any]) -> FetchedImage:
+        """Fetch or generate the wallpaper image."""
+        raise NotImplementedError
 
 
 class ProviderHooks:
@@ -61,17 +70,17 @@ class ProviderHooks:
     @hookspec
     def usurface_provider_name(self) -> str:
         """Return the short provider name (matches ``[surface.source].provider``)."""
-        ...
+        raise NotImplementedError
 
     @hookspec
     def usurface_provider_info(self) -> ProviderInfo:
         """Return metadata describing this provider."""
-        ...
+        raise NotImplementedError
 
     @hookspec(firstresult=True)
     def usurface_provider_fetch(self, options: dict[str, Any]) -> FetchedImage:
         """Fetch or generate an image; return its bytes."""
-        ...
+        raise NotImplementedError
 
 
 class _BuiltinPlugin:

@@ -21,6 +21,7 @@ def _get_user_home() -> Path | None:
     sudo_user = os.environ.get("SUDO_USER")
     if sudo_user and os.geteuid() == 0:
         import pwd
+
         try:
             return Path(pwd.getpwnam(sudo_user).pw_dir)
         except KeyError:

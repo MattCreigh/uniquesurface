@@ -1,17 +1,111 @@
 """Atomic file writes (tmp + fsync + rename).
 
 A power-cut mid-write must not leave a corrupted file. We write to a
-sibling temporary file, fsync it, then ``os.replace`` over the target.
-The destination directory must exist.
+temporary file, fsync it, then ``os.replace`` over the target.
+
+The temp file is created in the platform temp directory so that a
+user-mode run can still update a destination whose parent directory is
+owned by another user (for example, after an earlier ``sudo`` run left
+files behind). If ``os.replace`` fails because the temp directory and the
+destination live on different filesystems, we fall back to a sibling temp
+file in the destination directory. If that is also unwritable we fall
+back to a direct overwrite so the user gets a clear permission error on
+the destination path rather than on an internal temp file.
 """
 
 from __future__ import annotations
 
+import errno
 import os
+import shutil
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
 from typing import IO
+
+
+def _atomic_move(tmp_path: Path, dest: Path, mode: int | None = None) -> None:
+    """Move ``tmp_path`` onto ``dest`` atomically if possible.
+
+    The primary temp directory is the platform temp directory. On most
+    Linux systems ``/tmp`` is a ``tmpfs`` mount, while ``/home`` lives on
+    the root filesystem, so ``os.replace`` raises ``EXDEV``. We then try a
+    sibling temp file in ``dest.parent``. If that directory is not
+    writable (e.g. root-owned after a previous ``sudo`` run), we fall back
+    to writing directly to ``dest``. In that case atomicity is lost but
+    the user sees a permission error pointing at the real destination path
+    instead of an internal temp file, and the operation still succeeds
+    if the destination file itself is writable.
+
+    If ``mode`` is given, it is applied to the destination *after* the
+    move, because ``os.replace`` preserves the mode of the pre-existing
+    file (or uses the process umask for new files), ignoring the mode of
+    the temp file.
+    """
+    try:
+        os.replace(tmp_path, dest)
+        if mode is not None:
+            os.chmod(dest, mode)
+        return
+    except OSError as exc:
+        if exc.errno != errno.EXDEV:
+            raise
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        sibling_fd, sibling_name = tempfile.mkstemp(
+            prefix=f".{dest.name}.",
+            suffix=".tmp",
+            dir=str(dest.parent),
+        )
+    except PermissionError:
+        # Parent directory is not writable. Try a direct overwrite of the
+        # destination file, which may still work if the file itself is
+        # writable even though new files cannot be created in the dir.
+        _direct_overwrite(tmp_path, dest)
+        if mode is not None:
+            os.chmod(dest, mode)
+        return
+
+    sibling_tmp = Path(sibling_name)
+    try:
+        with os.fdopen(sibling_fd, "wb") as f:
+            with tmp_path.open("rb") as src:
+                f.write(src.read())
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(sibling_tmp, dest)
+        if mode is not None:
+            os.chmod(dest, mode)
+    finally:
+        try:
+            sibling_tmp.unlink()
+        except FileNotFoundError:
+            pass
+        try:
+            tmp_path.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def _direct_overwrite(src: Path, dest: Path) -> None:
+    """Copy ``src`` over ``dest`` as a last-resort, non-atomic fallback."""
+    try:
+        shutil.copy2(str(src), str(dest))
+    except OSError:
+        # If copy fails because dest is not writable, re-raise with a
+        # helpful message naming the real destination path.
+        raise PermissionError(
+            errno.EACCES,
+            f"Permission denied writing to {dest}. "
+            f"If you previously ran usurface with sudo, run: "
+            f"sudo chown -R $USER:$USER {dest.parent}",
+        ) from None
+    finally:
+        try:
+            src.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def atomic_write_bytes(
@@ -22,9 +116,8 @@ def atomic_write_bytes(
 ) -> Path:
     """Write ``data`` to ``path`` atomically.
 
-    Creates a sibling temp file, fsyncs it, then ``os.replace``s it over
-    the target. If the target does not exist it is created. Parent
-    directory must already exist.
+    Creates a temp file, fsyncs it, then ``os.replace``s it over the
+    target. Parent directory must already exist (it is created if not).
 
     Parameters
     ----------
@@ -45,7 +138,7 @@ def atomic_write_bytes(
     fd, tmp_name = tempfile.mkstemp(
         prefix=f".{dest.name}.",
         suffix=".tmp",
-        dir=str(dest.parent),
+        dir=tempfile.gettempdir(),
     )
     tmp_path = Path(tmp_name)
     try:
@@ -55,7 +148,7 @@ def atomic_write_bytes(
             os.fsync(f.fileno())
         if mode is not None:
             os.chmod(tmp_path, mode)
-        os.replace(tmp_path, dest)
+        _atomic_move(tmp_path, dest, mode=mode)
     except Exception:
         try:
             tmp_path.unlink()
@@ -93,7 +186,7 @@ def atomic_replace_with(
     fd, tmp_name = tempfile.mkstemp(
         prefix=f".{dest.name}.",
         suffix=".tmp",
-        dir=str(dest.parent),
+        dir=tempfile.gettempdir(),
     )
     tmp_path = Path(tmp_name)
     try:
@@ -103,7 +196,7 @@ def atomic_replace_with(
             os.fsync(f.fileno())
         if mode is not None:
             os.chmod(tmp_path, mode)
-        os.replace(tmp_path, dest)
+        _atomic_move(tmp_path, dest, mode=mode)
     except Exception:
         try:
             tmp_path.unlink()

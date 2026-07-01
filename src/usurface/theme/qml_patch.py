@@ -42,13 +42,13 @@ class FontPatch:
 
     def render_block(self) -> str:
         return (
-            f'pragma Singleton\nimport QtQuick\n\n'
-            f'QtObject {{\n'
+            f"pragma Singleton\nimport QtQuick\n\n"
+            f"QtObject {{\n"
             f'    readonly property string fontFamily: "{self.family}"\n'
             f'    readonly property string fontWeight: "{self.weight}"\n'
             f'    readonly property string passwordCharacter: "{self.password_character}"\n'
             f'    readonly property string clockFormat: "{self.clock_format}"\n'
-            f'}}\n'
+            f"}}\n"
         )
 
 

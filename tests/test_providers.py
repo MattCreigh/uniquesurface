@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import io
 from pathlib import Path
 
 import httpx
@@ -10,7 +9,6 @@ import pytest
 import respx
 
 from usurface.providers import (
-    FetchedImage,
     ProviderError,
     fetch_from_source,
     get_provider,
@@ -108,7 +106,9 @@ def test_file_provider_missing_file(tmp_path: Path) -> None:
         file.fetch({"path": str(tmp_path / "nope.png")})
 
 
-def test_file_provider_expands_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_file_provider_expands_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
     target = tmp_path / "wp.jpg"
     target.write_bytes(b"\xff\xd8\xff" + b"jpegs")
@@ -137,7 +137,11 @@ def test_bing_fetches_metadata_then_image(respx_mock: respx.router.MockRouter) -
     )
     image_route = respx_mock.get(
         "https://www.bing.com/th?id=OHR.Foo_1920x1080.jpg&pid=hp"
-    ).mock(return_value=httpx.Response(200, content=image_bytes, headers={"content-type": "image/jpeg"}))
+    ).mock(
+        return_value=httpx.Response(
+            200, content=image_bytes, headers={"content-type": "image/jpeg"}
+        )
+    )
 
     img = bing.fetch({"mkt": "en-US", "resolution": "1920x1080"})
     assert metadata_route.called
@@ -146,7 +150,9 @@ def test_bing_fetches_metadata_then_image(respx_mock: respx.router.MockRouter) -
     assert img.content_type == "image/jpeg"
 
 
-def test_bing_replaces_resolution_placeholder(respx_mock: respx.router.MockRouter) -> None:
+def test_bing_replaces_resolution_placeholder(
+    respx_mock: respx.router.MockRouter,
+) -> None:
     image_bytes = b"\xff\xd8\xff" + b"image"
 
     respx_mock.get(bing._METADATA_URL).mock(
@@ -156,7 +162,9 @@ def test_bing_replaces_resolution_placeholder(respx_mock: respx.router.MockRoute
         )
     )
     respx_mock.get("https://www.bing.com/th?id=3840x2160.jpg").mock(
-        return_value=httpx.Response(200, content=image_bytes, headers={"content-type": "image/jpeg"})
+        return_value=httpx.Response(
+            200, content=image_bytes, headers={"content-type": "image/jpeg"}
+        )
     )
 
     img = bing.fetch({"resolution": "3840x2160"})

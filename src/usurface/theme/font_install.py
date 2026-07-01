@@ -30,9 +30,13 @@ def _bundled_font() -> Path | None:
     """Return the path to the bundled Inter font, or None if absent."""
     from importlib.resources import files
 
-    pkg_root = files("usurface")  # type: ignore[arg-type]
-    for name in ("Inter-Regular.ttf", "fonts/Inter-Regular.ttf"):
-        candidate = pkg_root.joinpath(name)  # type: ignore[attr-defined]
+    pkg_root = files("usurface")
+    for name in (
+        "Inter-Regular.ttf",
+        "fonts/Inter-Regular.ttf",
+        "theme/fonts/Inter-Regular.ttf",
+    ):
+        candidate = pkg_root.joinpath(name)
         if candidate.is_file():
             return Path(str(candidate))
     return None
@@ -56,7 +60,9 @@ def _run_fc_cache(target: Path) -> bool:
     return True
 
 
-def install(*, source: Path | None = None, force_user: bool = False) -> FontInstallResult:
+def install(
+    *, source: Path | None = None, force_user: bool = False
+) -> FontInstallResult:
     """Copy the Inter font into the appropriate fonts directory.
 
     Parameters
@@ -69,7 +75,8 @@ def install(*, source: Path | None = None, force_user: bool = False) -> FontInst
     src = source or _bundled_font()
     if src is None or not src.is_file():
         raise FileNotFoundError(
-            "no bundled Inter font and no source= override provided"
+            "No bundled Inter font found in the package and no source= override provided. "
+            "Install Inter system-wide (e.g. fonts-inter) or provide a TTF via source=."
         )
 
     if not force_user and _system_writable():

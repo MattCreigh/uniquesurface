@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 import os
-import shutil
 from pathlib import Path
 
 import pytest
 
 from usurface.backends.desktop import DesktopBackend
-from usurface.backends._kconfig import KConfigToolMissing
 from usurface.manifest import Manifest
 
 
@@ -72,8 +70,9 @@ def test_desktop_apply_writes_expected_keys(
     # Manifest entry recorded for the config file.
     entries = manifest.iter_entries()
     assert len(entries) == 1
-    assert entries[0].path == str(Path("~/.config/plasma-org.kde.plasma.desktop-appletsrc").expanduser())
-
+    assert entries[0].path == str(
+        Path(os.environ["XDG_CONFIG_HOME"]) / "plasma-org.kde.plasma.desktop-appletsrc"
+    )
 
 
 def test_desktop_dry_run_plan(

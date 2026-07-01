@@ -54,9 +54,7 @@ def test_parses_minimal_config() -> None:
 
 def test_rejects_unknown_top_level_key() -> None:
     with pytest.raises(Exception):  # noqa: PT011
-        config.load_config_from_string(
-            SAMPLE_TOML + "\n[surface.unknown]\nfoo = 1\n"
-        )
+        config.load_config_from_string(SAMPLE_TOML + "\n[surface.unknown]\nfoo = 1\n")
 
 
 def test_rejects_invalid_provider_name() -> None:

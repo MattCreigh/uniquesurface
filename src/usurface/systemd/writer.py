@@ -1,45 +1,54 @@
-"""Render systemd user units from Jinja templates."""
+"""Render systemd user units from embedded templates."""
 
 from __future__ import annotations
 
 import os
 import shutil
 import subprocess
-from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
-from jinja2 import Environment, FileSystemLoader
-
-
 from usurface import paths
 
+_SERVICE_TEMPLATE = """\
+[Unit]
+Description=uniquesurface — refresh daily POTD wallpaper
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart={usurface_bin} apply
+WorkingDirectory={working_dir}
+StandardOutput=journal
+StandardError=journal
+"""
+
+_TIMER_TEMPLATE = """\
+[Unit]
+Description=uniquesurface — daily POTD refresh
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=15min
+Persistent=true
+Unit=usurface-pull.service
+
+[Install]
+WantedBy=timers.target
+"""
+
+
 def _get_unit_dir() -> Path:
-    return paths.config_dir() / "systemd" / "user"
-
-
-def _template_env() -> Environment:
-    template_dir = files("usurface.systemd").joinpath("templates")  # type: ignore[arg-type]
-    # FileSystemLoader needs a real string path.
-    env = Environment(
-        loader=FileSystemLoader(str(template_dir)),
-        keep_trailing_newline=True,
-        trim_blocks=True,
-        lstrip_blocks=True,
-    )
-    return env
+    return paths.config_dir().parent / "systemd" / "user"
 
 
 def render_service(context: dict[str, Any]) -> str:
-    env = _template_env()
-    template = env.get_template("usurface-pull.service.j2")
-    return template.render(**context)
+    return _SERVICE_TEMPLATE.format(**context)
 
 
 def render_timer() -> str:
-    env = _template_env()
-    template = env.get_template("usurface-pull.timer.j2")
-    return template.render()
+    return _TIMER_TEMPLATE
 
 
 def install(
@@ -52,7 +61,7 @@ def install(
 
     Returns ``(service_path, timer_path)``. Does not run ``systemctl``.
     """
-    target_dir = (unit_dir or _get_unit_dir())
+    target_dir = unit_dir or _get_unit_dir()
     target_dir.mkdir(parents=True, exist_ok=True)
 
     bin_path = usurface_bin or shutil.which("usurface") or "/usr/local/bin/usurface"
@@ -105,6 +114,45 @@ def disable_and_stop() -> tuple[bool, str]:
     if res.returncode != 0:
         return False, res.stderr.strip() or res.stdout.strip()
     return True, "disabled usurface-pull.timer"
+
+
+def pause() -> tuple[bool, str]:
+    """Mask the timer so it will not trigger until resumed."""
+    # Use --runtime for user units: a persistent mask symlink cannot be
+    # created in the same directory that already contains the unit file,
+    # which causes 'Failed to mask unit: File ... already exists'.
+    res = systemctl("mask", "--runtime", "usurface-pull.timer")
+    if res.returncode != 0:
+        return False, res.stderr.strip() or res.stdout.strip()
+    return True, "paused usurface-pull.timer (runtime masked)"
+
+
+def resume() -> tuple[bool, str]:
+    """Unmask and re-enable the timer."""
+    res = systemctl("unmask", "--runtime", "usurface-pull.timer")
+    if res.returncode != 0:
+        return False, res.stderr.strip() or res.stdout.strip()
+    systemctl("enable", "usurface-pull.timer")
+    return True, "resumed usurface-pull.timer"
+
+
+def is_paused() -> bool:
+    """Return True if the timer is currently masked.
+
+    systemd reports a runtime mask as ``enabled`` from ``is-enabled``
+    because the persistent unit file is unchanged. Runtime masks are
+    represented by a symlink under ``$XDG_RUNTIME_DIR/systemd/user/``
+    pointing to ``/dev/null``, so we check that path as well.
+    """
+    res = systemctl("is-enabled", "usurface-pull.timer")
+    if res.stdout.strip() == "masked":
+        return True
+
+    runtime_dir = Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}"))
+    runtime_link = runtime_dir / "systemd" / "user" / "usurface-pull.timer"
+    if runtime_link.is_symlink() and os.readlink(runtime_link) == "/dev/null":
+        return True
+    return False
 
 
 def is_enabled() -> bool:

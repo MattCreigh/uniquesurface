@@ -8,6 +8,19 @@ from typing import Protocol, runtime_checkable
 from usurface.manifest import Manifest
 
 
+class BackendError(RuntimeError):
+    """Raised by a backend when it cannot perform its apply step.
+
+    The orchestrator catches this for non-fatal backends and continues,
+    surfacing the message to the user as a warning. Fatal backends (or
+    unexpected exceptions) still propagate.
+    """
+
+    def __init__(self, message: str, *, hint: str | None = None) -> None:
+        super().__init__(message)
+        self.hint = hint
+
+
 @runtime_checkable
 class Backend(Protocol):
     """A surface writer.

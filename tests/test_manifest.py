@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
 
 from usurface import manifest
 
@@ -68,7 +67,9 @@ def test_write_tracked_when_target_missing(tmp_path: Path) -> None:
     log = tmp_path / "manifest.jsonl"
     m = manifest.Manifest(log)
     target = tmp_path / "new.bin"
-    entry = manifest.write_tracked(m, target, b"hello", snapshots_dir=tmp_path / "snaps")
+    entry = manifest.write_tracked(
+        m, target, b"hello", snapshots_dir=tmp_path / "snaps"
+    )
     assert entry.prev_sha256 is None
     assert entry.prev_bytes_path in ("", None)
     assert target.read_bytes() == b"hello"

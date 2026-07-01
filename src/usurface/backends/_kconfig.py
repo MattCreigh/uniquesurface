@@ -78,10 +78,32 @@ def qdbus_call(
     """Call ``qdbus6`` to invoke a method.
 
     Returns the argv for dry-run inspection.
+
+    Plasma is not always running (e.g. on a headless TTY or right after
+    login). We treat a missing service as a soft success: the config
+    files are updated, and Plasma will pick the wallpaper up on next
+    start. We log at debug level so the user doesn't see noise.
     """
     argv: list[str] = [ensure_tool("qdbus6"), service, path, method, *args]
     if dry_run:
         return argv
     _log.info("qdbus_call", argv=argv)
-    subprocess.run(argv, check=False)
+    proc = subprocess.run(argv, check=False, capture_output=True, text=True)
+    if proc.returncode != 0:
+        stderr = (proc.stderr or "").strip()
+        if "does not exist" in stderr or "not found" in stderr.lower():
+            _log.debug(
+                "plasma_service_unavailable",
+                service=service,
+                hint="Plasma is not running; wallpaper will refresh on next start.",
+            )
+        else:
+            _log.debug(
+                "qdbus_call_failed",
+                service=service,
+                path=path,
+                method=method,
+                returncode=proc.returncode,
+                stderr=stderr,
+            )
     return argv

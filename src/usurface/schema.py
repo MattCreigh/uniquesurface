@@ -53,9 +53,7 @@ class SourceOptions(_StrictModel):
 class Source(_StrictModel):
     """Where the surface set's wallpaper comes from."""
 
-    provider: str = Field(
-        description="Provider plugin name (built-in or entry-point)."
-    )
+    provider: str = Field(description="Provider plugin name (built-in or entry-point).")
     options: SourceOptions = Field(
         default_factory=SourceOptions,
         description="Provider-specific options.",
@@ -66,8 +64,7 @@ class Source(_StrictModel):
     def _check_provider_name(cls, value: str) -> str:
         if not _PROVIDER_RE.match(value):
             raise ValueError(
-                f"invalid provider name {value!r}; "
-                "must match [a-z][a-z0-9_-]{0,63}"
+                f"invalid provider name {value!r}; must match [a-z][a-z0-9_-]{{0,63}}"
             )
         return value
 

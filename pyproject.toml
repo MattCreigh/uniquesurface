@@ -1,6 +1,6 @@
 [project]
 name = "uniquesurface"
-version = "0.0.0"
+version = "0.1.0"
 description = "Unified Plasma 6 surface set manager (desktop, lock, login wallpapers)."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -30,6 +30,13 @@ dependencies = [
 [project.scripts]
 usurface = "usurface.cli:main"
 
+[dependency-groups]
+dev = [
+  "ruff>=0.8",
+  "mypy>=1.10",
+  "fonttools>=4.5",
+]
+
 [project.optional-dependencies]
 test = [
   "pytest>=8.2,<9",
@@ -42,16 +49,22 @@ test = [
 requires = ["hatchling>=1.24,<2"]
 build-backend = "hatchling.build"
 
-[tool.hatch.build.targets.wheel]
-packages = ["src/usurface"]
-
-[tool.hatch.build.targets.sdist]
-include = ["src/usurface", "tests", "README.md", "PLAN.md", "pyproject.toml"]
-
 [tool.pytest.ini_options]
 minversion = "8.0"
 addopts = "-ra --strict-markers"
 testpaths = ["tests"]
 markers = [
   "integration: requires a real Plasma session (skipped if no DISPLAY/WAYLAND_DISPLAY)",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/usurface"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "src/usurface",
+  "tests",
+  "README.md",
+  "PLAN.md",
+  "pyproject.toml",
 ]

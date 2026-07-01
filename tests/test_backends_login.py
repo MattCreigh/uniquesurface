@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import os
-import stat
 from pathlib import Path
 
 import pytest
 
-from usurface.backends.login import LoginBackend, _THEME_CONF_PATH
+from usurface.backends.login import LoginBackend
 from usurface.manifest import Manifest
 
 
@@ -18,9 +16,7 @@ def fake_theme_conf(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     conf = tmp_path / "breeze" / "theme.conf"
     conf.parent.mkdir(parents=True)
     conf.write_text(
-        "[General]\n"
-        "type=image\n"
-        "background=/old/path.jpg\n",
+        "[General]\ntype=image\nbackground=/old/path.jpg\n",
         encoding="utf-8",
     )
     monkeypatch.setattr("usurface.backends.login._THEME_CONF_PATH", conf)
@@ -79,4 +75,6 @@ def test_login_skips_when_theme_conf_missing(
     backend = LoginBackend()
     plan = backend.dry_run_plan(tmp_path / "wp.jpg")
     assert plan and plan[0].startswith("#")
-    backend.apply(Manifest(tmp_path / "manifest.jsonl"), tmp_path / "wp.jpg")  # must not raise
+    backend.apply(
+        Manifest(tmp_path / "manifest.jsonl"), tmp_path / "wp.jpg"
+    )  # must not raise

@@ -4,12 +4,40 @@ from __future__ import annotations
 
 import os
 import sys
+import traceback
 from pathlib import Path
 
 import click
 
 from usurface import __version__
-from usurface.logging import configure_logging
+from usurface.logging import configure_logging, get_logger
+
+_log = get_logger(__name__)
+
+
+class CLIError(RuntimeError):
+    """A user-facing error with an optional hint.
+
+    The top-level ``main`` group catches this and prints the message and
+    hint to stderr, then exits with a non-zero status. This is how
+    graceful failures are signalled from anywhere in the call stack.
+    """
+
+    def __init__(
+        self, message: str, *, hint: str | None = None, status: int = 1
+    ) -> None:
+        super().__init__(message)
+        self.hint = hint
+        self.status = status
+
+
+def _format_error(message: str, hint: str | None) -> str:
+    """Render a user-facing error block, including a hint if present."""
+    lines = [f"error: {message}"]
+    if hint:
+        for h in hint.splitlines():
+            lines.append(f"  {h}")
+    return "\n".join(lines)
 
 
 @click.group(invoke_without_command=True)
@@ -26,6 +54,35 @@ def main(ctx: click.Context, version: bool, log_level: str) -> None:
     configure_logging(log_level)
     if version or ctx.invoked_subcommand is None:
         click.echo(f"uniquesurface {__version__}")
+
+
+def _install_excepthook() -> None:
+    """Install a top-level error handler so unexpected exceptions show a
+    clean message instead of a Python traceback.
+
+    The user can opt back into the traceback with ``USURFACE_DEBUG=1``.
+    """
+
+    def excepthook(exc_type, exc_value, exc_tb):  # type: ignore[no-untyped-def]
+        if os.environ.get("USURFACE_DEBUG"):
+            traceback.print_exception(exc_type, exc_value, exc_tb)
+            return
+        if issubclass(exc_type, KeyboardInterrupt):
+            click.echo("aborted.", err=True)
+            return
+        if issubclass(exc_type, CLIError):
+            click.echo(_format_error(str(exc_value), exc_value.hint), err=True)
+            sys.exit(exc_value.status)
+        click.echo(
+            _format_error(
+                f"unexpected error: {exc_value}",
+                "set USURFACE_DEBUG=1 for a full traceback",
+            ),
+            err=True,
+        )
+        sys.exit(1)
+
+    sys.excepthook = excepthook
 
 
 # --- apply -------------------------------------------------------------
@@ -48,18 +105,42 @@ def apply(dry_run: bool, config_path: Path | None) -> None:
     from usurface.orchestrator import apply_to_surfaces
 
     if config_path is None and not paths.config_file().exists():
-        click.echo(
-            f"no config at {paths.config_file()}; run `usurface config init`",
-            err=True,
+        raise CLIError(
+            f"no config at {paths.config_file()}",
+            hint="run `usurface config init` to create one",
+            status=2,
         )
-        sys.exit(2)
 
     cfg = load_config(config_path)
-    
+
     from usurface.theme.font_install import is_installed
+
     if not is_installed(cfg.surface.fonts.family):
-        click.echo(f"Warning: font family '{cfg.surface.fonts.family}' not found by fontconfig.", err=True)
-        
+        click.echo(
+            f"Warning: font family '{cfg.surface.fonts.family}' not found by fontconfig.",
+            err=True,
+        )
+
+    # Pre-flight: if we are not root and the login surface (SDDM theme)
+    # is present, the login backend will fail. Warn the user clearly
+    # but continue so the user-mode surfaces still get updated.
+    from usurface.backends.login import _THEME_CONF_PATH
+    import os as _os
+
+    if not dry_run and _THEME_CONF_PATH.exists():
+        try:
+            writable = _os.access(_THEME_CONF_PATH, _os.W_OK) or _os.access(
+                _THEME_CONF_PATH.parent, _os.W_OK
+            )
+        except OSError:
+            writable = False
+        if not writable and _os.geteuid() != 0:
+            click.echo(
+                "Note: login (SDDM) surface requires root; "
+                "that step will be skipped or fail unless you re-run with sudo.",
+                err=True,
+            )
+
     manifest = Manifest()
     plan = apply_to_surfaces(cfg, manifest=manifest, dry_run=dry_run)
     for line in plan:
@@ -105,7 +186,7 @@ def restore(to_timestamp: str | None, yes: bool) -> None:
 @main.command()
 def status() -> None:
     """Show the current configuration and last apply status."""
-    from usurface import paths
+    from usurface import paths, systemd
     from usurface.manifest import Manifest
 
     cfg = paths.config_file()
@@ -118,9 +199,9 @@ def status() -> None:
     from usurface.theme.font_install import is_installed
 
     click.echo(
-        f"font 'Inter' resolves via fontconfig: "
-        f"{'yes' if is_installed() else 'no'}"
+        f"font 'Inter' resolves via fontconfig: {'yes' if is_installed() else 'no'}"
     )
+    click.echo(f"timer paused: {'yes' if systemd.is_paused() else 'no'}")
 
 
 # --- config -----------------------------------------------------------
@@ -270,7 +351,14 @@ def qml_update_templates(yes: bool) -> None:
 
 @main.command()
 def doctor() -> None:
-    """Run health checks on the install."""
+    """Run health checks on the install.
+
+    Exits 0 if everything is fine, 1 if there are hard problems
+    (missing config, timer disabled, QML drift). Soft warnings (font
+    not found, shared dir not writable) are reported but do not change
+    the exit code, because they reflect a config choice or a non-root
+    run rather than a broken install.
+    """
     from usurface import paths
     from usurface.theme.font_install import is_installed
 
@@ -291,13 +379,18 @@ def doctor() -> None:
         click.echo(f"[ok]   shared dir writable: {sw}")
     else:
         click.echo(f"[warn] shared dir not writable: {sw}")
-        ok = False
 
     if is_installed("Inter"):
         click.echo("[ok]   font 'Inter' resolves via fontconfig")
     else:
         click.echo("[warn] font 'Inter' not found by fontconfig")
-        ok = False
+
+    from usurface import systemd as _systemd
+
+    if _systemd.is_paused():
+        click.echo("[info] timer is paused")
+    else:
+        click.echo(f"[ok]   timer enabled state: {_systemd.is_enabled()}")
 
     from usurface.theme import extract, drift
 
@@ -310,7 +403,9 @@ def doctor() -> None:
             if rep.on_disk_matches_pristine:
                 click.echo(f"[ok]   '{name}': no drift")
             else:
-                click.echo(f"[warn] '{name}': DRIFT DETECTED (on disk doesn't match stored pristine)")
+                click.echo(
+                    f"[warn] '{name}': DRIFT DETECTED (on disk doesn't match stored pristine)"
+                )
                 ok = False
             sha = rep.pristine_sha
             click.echo(
@@ -357,6 +452,7 @@ def migrate_from_shell(dry_run: bool) -> None:
         Lock,
         Login,
         Source,
+        SourceOptions,
         Surface,
     )
 
@@ -364,7 +460,9 @@ def migrate_from_shell(dry_run: bool) -> None:
         surface=Surface(
             source=Source(
                 provider="bing",
-                options={"mkt": "en-US", "resolution": "1920x1080"},
+                options=SourceOptions.model_construct(
+                    mkt="en-US", resolution="1920x1080"
+                ),
             ),
             fonts=Fonts(),
             login=Login(),
@@ -435,6 +533,7 @@ def install(yes: bool) -> None:
 def uninstall(yes: bool) -> None:
     """Disable systemd timer and remove unit files."""
     from usurface import systemd, paths
+
     if not yes and not click.confirm("Disable and remove systemd user units?"):
         click.echo("aborted.")
         return
@@ -452,6 +551,32 @@ def uninstall(yes: bool) -> None:
             click.echo(f"    removed {p}")
 
 
+@main.command()
+def pause() -> None:
+    """Temporarily stop the daily systemd timer without removing units."""
+    from usurface import systemd
+
+    ok, msg = systemd.pause()
+    if ok:
+        click.echo(msg)
+    else:
+        click.echo(f"pause failed: {msg}", err=True)
+        sys.exit(1)
+
+
+@main.command()
+def resume() -> None:
+    """Re-enable the daily systemd timer after a pause."""
+    from usurface import systemd
+
+    ok, msg = systemd.resume()
+    if ok:
+        click.echo(msg)
+    else:
+        click.echo(f"resume failed: {msg}", err=True)
+        sys.exit(1)
+
+
 def _detect_existing_setup() -> dict[str, str]:
     """Look for the legacy shell-based pieces on this system."""
     out: dict[str, str] = {}
@@ -462,6 +587,9 @@ def _detect_existing_setup() -> dict[str, str]:
     if timer.exists():
         out["systemd_timer"] = str(timer)
     return out
+
+
+_install_excepthook()
 
 
 if __name__ == "__main__":

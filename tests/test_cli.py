@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import httpx
@@ -15,7 +14,9 @@ from usurface.providers.builtin import bing
 from usurface.theme import extract
 
 
-def test_config_init_writes_starter(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_config_init_writes_starter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     runner = CliRunner()
     result = runner.invoke(main, ["config", "init"])
@@ -23,10 +24,12 @@ def test_config_init_writes_starter(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     config_path = Path(os_environ("XDG_CONFIG_HOME")) / "usurface" / "config.toml"
     assert config_path.exists()
     text = config_path.read_text()
-    assert "provider = \"bing\"" in text
+    assert 'provider = "bing"' in text
 
 
-def test_config_validate_against_starter(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_config_validate_against_starter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     runner = CliRunner()
     runner.invoke(main, ["config", "init"])
@@ -84,18 +87,25 @@ def test_apply_real_writes_files(
         "[General]\ntype=image\nbackground=/old.jpg\n", encoding="utf-8"
     )
     from usurface.backends import login as login_mod
+
     monkeypatch.setattr(login_mod, "_THEME_CONF_PATH", fake_sddm)
 
     # Mock extract targets and pristine template directory
     from usurface import paths
     from usurface.theme import extract as extract_mod
-    
+
     fake_login_qml = tmp_path / "Login.qml"
-    fake_login_qml.write_text("import QtQuick\nItem { property string fontFamily: \"Lato\" }\n", encoding="utf-8")
-    
+    fake_login_qml.write_text(
+        'import QtQuick\nItem { property string fontFamily: "Lato" }\n',
+        encoding="utf-8",
+    )
+
     monkeypatch.setattr(paths, "templates_dir", lambda: tmp_path / "templates")
     from usurface.theme.extract import copy_pristine_bytes
-    copy_pristine_bytes("sddm_login", b"import QtQuick\nItem { property string fontFamily: \"Lato\" }\n")
+
+    copy_pristine_bytes(
+        "sddm_login", b'import QtQuick\nItem { property string fontFamily: "Lato" }\n'
+    )
 
     monkeypatch.setattr(
         extract_mod,
@@ -105,10 +115,10 @@ def test_apply_real_writes_files(
         ],
     )
 
-
     # Mock Bing. Use a real 1x1 JPEG so Pillow can decode it.
     from PIL import Image
     import io
+
     buf = io.BytesIO()
     Image.new("RGB", (8, 8), "#1d99f3").save(buf, format="JPEG", quality=70)
     image_bytes = buf.getvalue()
@@ -119,7 +129,9 @@ def test_apply_real_writes_files(
         )
     )
     respx_mock.get("https://www.bing.com/th?id=OHR.Test_1920x1080.jpg").mock(
-        return_value=httpx.Response(200, content=image_bytes, headers={"content-type": "image/jpeg"})
+        return_value=httpx.Response(
+            200, content=image_bytes, headers={"content-type": "image/jpeg"}
+        )
     )
 
     cfg_dir = tmp_path / "xdg_config" / "usurface"
@@ -155,6 +167,7 @@ user_dir = "%s"
 
     # The manifest has entries (wallpapers, theme.conf, and QML screens)
     from usurface.manifest import Manifest
+
     m = Manifest(tmp_path / "xdg_state" / "usurface" / "manifest.jsonl")
     entries = m.iter_entries()
     assert len(entries) > 0
@@ -165,12 +178,10 @@ user_dir = "%s"
     assert any(str(fake_sddm) in p for p in paths_tracked)
     assert any(str(fake_login_qml) in p for p in paths_tracked)
 
-
     # SDDM Login.qml is patched with Inter font
     qml_content = fake_login_qml.read_text(encoding="utf-8")
     assert "Inter" in qml_content
     assert "/* @usurface:start */" in qml_content
-
 
 
 def test_status_runs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -215,8 +226,6 @@ def test_qml_update_templates_writes_files(
     (fake_plasma_dir / "LockScreenUi.qml").write_text(
         "import QtQuick\nItem {}\n", encoding="utf-8"
     )
-
-    from usurface.theme import extract
 
     monkeypatch.setattr(
         extract,
