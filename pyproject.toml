@@ -24,7 +24,6 @@ dependencies = [
   "structlog>=24.1,<25",
   "pluggy>=1.5,<2",
   "click>=8.1,<9",
-  "Jinja2>=3.1,<4",
 ]
 
 [project.scripts]
