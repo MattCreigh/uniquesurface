@@ -43,23 +43,6 @@ class FontPatch:
     password_character: str
     clock_format: str
 
-    def render_block(self) -> str:
-        """Render the sentinel-managed block as a sequence of property
-        re-assignments.
-
-        The block is placed inside the sentinel region. Each line is a
-        valid QML statement that reassigns an existing property of the
-        root object, e.g. ``fontFamily = "Inter"``. Because these are
-        plain assignments (not declarations) they don't introduce a new
-        root object or require ``pragma Singleton``.
-        """
-        return (
-            f'fontFamily = "{self.family}"\n'
-            f'fontWeight = "{self.weight}"\n'
-            f'passwordCharacter = "{self.password_character}"\n'
-            f'clockFormat = "{self.clock_format}"\n'
-        )
-
 
 def _ensure_sentinels(text: str, block: str) -> str:
     """Ensure ``text`` contains the sentinel region with ``block`` inside.
