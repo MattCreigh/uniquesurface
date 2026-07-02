@@ -125,14 +125,14 @@ def snapshot_previous_bytes(
     manifest: Manifest,
     target: Path,
     snapshots_dir: Path | None = None,
-) -> tuple[str, str]:
+) -> tuple[str | None, str | None]:
     """If ``target`` exists, copy it into the snapshots dir.
 
     Returns ``(prev_sha256, snapshot_path_str)``. If the file does not
     exist, returns ``(None, None)``.
     """
     if not target.exists():
-        return None, ""  # type: ignore[return-value]
+        return None, None
 
     snapshots = snapshots_dir or paths.state_dir() / "manifest_snapshots"
     snapshots.mkdir(parents=True, exist_ok=True)

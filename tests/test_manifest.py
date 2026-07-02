@@ -71,8 +71,25 @@ def test_write_tracked_when_target_missing(tmp_path: Path) -> None:
         m, target, b"hello", snapshots_dir=tmp_path / "snaps"
     )
     assert entry.prev_sha256 is None
-    assert entry.prev_bytes_path in ("", None)
+    # snapshot_previous_bytes returns (None, None) — NOT ("", "") — when the
+    # target doesn't exist. The empty-string was a type lie that broke the
+    # restore() "prev_sha256 is None" fallthrough branch.
+    assert entry.prev_bytes_path is None
     assert target.read_bytes() == b"hello"
+
+
+def test_snapshot_previous_bytes_returns_none_none_when_missing(
+    tmp_path: Path,
+) -> None:
+    """The helper's signature is tuple[str | None, str | None]; a missing
+    target must yield (None, None), not (None, '')."""
+    log = tmp_path / "manifest.jsonl"
+    m = manifest.Manifest(log)
+    prev_sha, prev_snap = manifest.snapshot_previous_bytes(
+        m, tmp_path / "does_not_exist", snapshots_dir=tmp_path / "snaps"
+    )
+    assert prev_sha is None
+    assert prev_snap is None
 
 
 def test_restore_unwrites_to_previous_bytes(tmp_path: Path) -> None:
