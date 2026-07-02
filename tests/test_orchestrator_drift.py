@@ -104,3 +104,64 @@ def test_drifted_qml_file_is_skipped_while_others_apply(
     applied = [line for line in plan if "applied" in line and "QML" in line]
     # They skip (no managed properties) but are still attempted, not aborted.
     assert len(applied) >= 2
+
+def test_adopt_drift_adopts_and_patches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With adopt_drift=True, a DriftError is handled by adopting the
+    drifted content as the new pristine and proceeding to patch."""
+    templates = tmp_path / "templates"
+    templates.mkdir()
+    monkeypatch.setattr(paths, "templates_dir", lambda: templates)
+
+    targets = [
+        ("sddm_login", tmp_path / "Login.qml"),
+        ("plasma_lockscreen_mainblock", tmp_path / "MainBlock.qml"),
+        ("plasma_lockscreen_ui", tmp_path / "LockScreenUi.qml"),
+    ]
+    for name, vpath in targets:
+        vpath.write_text("import QtQuick\nItem {}\n", encoding="utf-8")
+        (templates / f"{name}.qml").write_text(
+            "import QtQuick\nItem {}\n", encoding="utf-8"
+        )
+    monkeypatch.setattr(extract, "DEFAULT_TARGETS", targets)
+
+    from usurface.providers import FetchedImage
+    from usurface.theme import drift
+
+    fake_img = FetchedImage(
+        data=b"\x89PNG\r\n\x1a\n" + b"\x00" * 32,
+        content_type="image/png",
+        suggested_extension=".png",
+    )
+    real_handle = drift.handle_drift
+    call_count = {"n": 0}
+
+    def flaky(name: str, vendor_path: Path) -> Path | None:
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            raise drift.DriftError(
+                name=name,
+                vendor_path=vendor_path,
+                backup_path=vendor_path.parent / f"{vendor_path.name}.drift.bak",
+                pristine_sha="abc",
+                on_disk_sha="def",
+            )
+        return real_handle(name, vendor_path)
+
+    with (
+        patch("usurface.orchestrator.fetch_wallpaper", return_value=fake_img),
+        patch("usurface.orchestrator.verify_image", return_value=fake_img.data),
+        patch("usurface.theme.drift.handle_drift", side_effect=flaky),
+    ):
+        m = Manifest(tmp_path / "manifest.jsonl")
+        plan = apply_to_surfaces(
+            _make_config(tmp_path),
+            manifest=m,
+            backends=[],
+            adopt_drift=True,
+        )
+
+    # The first file was adopted, not skipped.
+    assert any("DRIFT ADOPTED" in line for line in plan)
+    assert not any("DRIFTED:" in line for line in plan)

@@ -73,6 +73,7 @@ def apply_to_surfaces(
     manifest: Manifest,
     backends: list[Backend] | None = None,
     dry_run: bool = False,
+    adopt_drift: bool = False,
 ) -> list[str]:
     """Run the apply pipeline for ``config``.
 
@@ -82,6 +83,12 @@ def apply_to_surfaces(
     so that one failing surface (e.g. SDDM when not run as root) does
     not prevent the other surfaces from being updated. Unexpected
     exceptions still propagate.
+
+    ``adopt_drift``: when True, a :class:`drift.DriftError` for a QML
+    file is handled by adopting the drifted (stripped) content as the
+    new pristine baseline and proceeding to patch — the explicit consent
+    path for after a Plasma update. Without the flag, drifted files are
+    skipped with a remediation hint.
     """
     expanded = expand_behaviour_paths(config)
     user_dir = Path(expanded.surface.behaviour.user_dir).expanduser()
@@ -178,20 +185,54 @@ def apply_to_surfaces(
                     )
                     plan.append(f"QML lock '{name}': {lmsg}")
             except drift.DriftError as exc:
-                # Drifted vendor file: skip patching but keep going so
-                # other surfaces still apply. The user must explicitly
-                # accept the new vendor content (qml-update-templates
-                # or apply --adopt-drift).
-                plan.append(f"QML backend '{name}' DRIFTED: {exc}")
-                plan.append(
-                    "  hint: run `usurface qml-update-templates` "
-                    "to accept the new vendor content"
-                )
-                _log.warning(
-                    "qml_backend_drift",
-                    backend=name,
-                    error=str(exc),
-                )
+                if adopt_drift:
+                    # Explicit consent: adopt the drifted (stripped)
+                    # content as the new pristine baseline, then patch.
+                    from usurface.theme import extract as _extract
+
+                    vtext = vendor_path.read_text(
+                        encoding="utf-8", errors="replace"
+                    )
+                    stripped = drift.strip_sentinels(vtext).encode("utf-8")
+                    _extract.copy_pristine_bytes(name, stripped)
+                    _log.warning(
+                        "qml_drift_adopted",
+                        backend=name,
+                        backup=str(exc.backup_path),
+                    )
+                    plan.append(
+                        f"QML backend '{name}' DRIFT ADOPTED: {exc.backup_path}"
+                    )
+                    # Re-run the patch with the new baseline.
+                    msg = apply_font_tokens(
+                        name=name,
+                        vendor_path=vendor_path,
+                        manifest=manifest,
+                        patch=font_patch,
+                    )
+                    plan.append(f"QML backend '{name}' applied: {msg}")
+                    if name == "plasma_lockscreen_ui":
+                        lmsg = apply_lock_tokens(
+                            name=name,
+                            vendor_path=vendor_path,
+                            manifest=manifest,
+                            patch=lock_patch,
+                        )
+                        plan.append(f"QML lock '{name}': {lmsg}")
+                else:
+                    # Drifted vendor file: skip patching but keep going
+                    # so other surfaces still apply. The user must
+                    # explicitly accept the new vendor content.
+                    plan.append(f"QML backend '{name}' DRIFTED: {exc}")
+                    plan.append(
+                        "  hint: run `usurface qml-update-templates` "
+                        "to accept the new vendor content"
+                    )
+                    _log.warning(
+                        "qml_backend_drift",
+                        backend=name,
+                        error=str(exc),
+                    )
             except BackendError as exc:
                 plan.append(f"QML backend '{name}' FAILED: {exc}")
                 if exc.hint:

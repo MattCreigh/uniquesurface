@@ -57,6 +57,18 @@ def test_install_raises_when_binary_missing(tmp_path: Path, monkeypatch) -> None
         systemd.install(unit_dir=tmp_path / "units")
 
 
+def test_service_unit_never_passes_adopt_drift(tmp_path: Path) -> None:
+    """The systemd service must NOT pass --adopt-drift: drift adoption is
+    an explicit consent action, never done automatically by the timer."""
+    unit_dir = tmp_path / "user_systemd"
+    svc, _tmr = systemd.install(
+        unit_dir=unit_dir, usurface_bin="/bin/true", working_dir="/tmp"
+    )
+    text = svc.read_text()
+    assert "--adopt-drift" not in text
+    assert "ExecStart=/bin/true apply" in text
+
+
 def test_pause_uses_runtime_mask() -> None:
     with patch.object(writer, "systemctl", return_value=_fake_process()) as mock:
         ok, msg = writer.pause()

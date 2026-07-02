@@ -30,6 +30,18 @@ adheres to [Semantic Versioning](https://semver.org/).
   partial restore (`--to <ts>`) keeps entries with `ts <= to` and prunes
   only the snapshots of reverted entries. A second restore is now a
   no-op rather than a replay.
+- QML drift is no longer silently adopted as the new pristine baseline.
+  `handle_drift` now raises `DriftError`; the user must explicitly
+  consent via `usurface qml-update-templates` or `usurface apply
+  --adopt-drift`.
+
+### Added (Appendix B)
+
+- `usurface apply --adopt-drift`: when passed, a drifted QML file is
+  adopted as the new pristine baseline (after a timestamped backup) and
+  patched. Without the flag, drifted files are skipped with a hint.
+- `usurface status` and `usurface doctor` now report any QML drift with
+  the exact remediation commands.
 
 ### Known limitations
 

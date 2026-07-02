@@ -97,7 +97,12 @@ def _install_excepthook() -> None:
     default=None,
     help="Path to config file (default: ~/.config/usurface/config.toml).",
 )
-def apply(dry_run: bool, config_path: Path | None) -> None:
+@click.option(
+    "--adopt-drift",
+    is_flag=True,
+    help="Adopt drifted vendor QML as the new pristine baseline (after a Plasma update).",
+)
+def apply(dry_run: bool, config_path: Path | None, adopt_drift: bool) -> None:
     """Apply the configured wallpaper to desktop, lock, and login."""
     from usurface import paths
     from usurface.config import load_config
@@ -134,7 +139,9 @@ def apply(dry_run: bool, config_path: Path | None) -> None:
         )
 
     manifest = Manifest()
-    plan = apply_to_surfaces(cfg, manifest=manifest, dry_run=dry_run)
+    plan = apply_to_surfaces(
+        cfg, manifest=manifest, dry_run=dry_run, adopt_drift=adopt_drift
+    )
     for line in plan:
         click.echo(line)
     if not dry_run:
@@ -180,6 +187,7 @@ def status() -> None:
     """Show the current configuration and last apply status."""
     from usurface import paths, systemd
     from usurface.manifest import Manifest
+    from usurface.theme import extract, drift
 
     cfg = paths.config_file()
     click.echo(f"config: {cfg} {'(present)' if cfg.exists() else '(missing)'}")
@@ -194,6 +202,24 @@ def status() -> None:
         f"font 'Inter' resolves via fontconfig: {'yes' if is_installed() else 'no'}"
     )
     click.echo(f"timer paused: {'yes' if systemd.is_paused() else 'no'}")
+    # Report any QML drift so it's visible without running doctor.
+    tdir = paths.templates_dir()
+    if tdir.is_dir():
+        drifted = []
+        for name, vendor_path in extract.DEFAULT_TARGETS:
+            if not vendor_path.is_file():
+                continue
+            rep = drift.check(name, vendor_path)
+            if not rep.on_disk_matches_pristine:
+                drifted.append(name)
+        if drifted:
+            click.echo(f"QML drift: {', '.join(drifted)}")
+            click.echo(
+                "  fix: usurface qml-update-templates  "
+                "(or usurface apply --adopt-drift)"
+            )
+        else:
+            click.echo("QML drift: none")
 
 
 # --- config -----------------------------------------------------------
@@ -396,6 +422,10 @@ def doctor() -> None:
             else:
                 click.echo(
                     f"[warn] '{name}': DRIFT DETECTED (on disk doesn't match stored pristine)"
+                )
+                click.echo(
+                    "       fix: usurface qml-update-templates  "
+                    "(or usurface apply --adopt-drift)"
                 )
                 ok = False
             sha = rep.pristine_sha
