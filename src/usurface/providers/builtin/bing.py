@@ -9,6 +9,9 @@ The provider expects these options:
 - ``resolution``: requested resolution (default ``"1920x1080"``).
 - ``index``: day offset (default ``0``).
 - ``timeout``: per-request timeout in seconds (default 30).
+
+Downloads are streamed and capped at ``_MAX_IMAGE_BYTES`` (50 MiB) to
+prevent an unbounded download from filling memory/disk.
 """
 
 from __future__ import annotations
@@ -20,6 +23,10 @@ import httpx
 from usurface.providers import FetchedImage, ProviderError
 
 _METADATA_URL = "https://www.bing.com/HPImageArchive.aspx"
+# Maximum image download size. Bing POTD JPEGs are ~1–2 MiB; 50 MiB is a
+# generous ceiling that still prevents an unbounded/malicious response
+# from exhausting memory.
+_MAX_IMAGE_BYTES = 50 * 1024 * 1024
 _DEFAULT_OPTIONS: dict[str, Any] = {
     "mkt": "en-US",
     "resolution": "1920x1080",
@@ -64,12 +71,33 @@ def fetch(options: dict[str, Any]) -> FetchedImage:
         image_url = image_url.replace("{resolution}", str(opts["resolution"]))
 
     with httpx.Client(timeout=timeout, headers=headers) as client:
-        img_resp = client.get(image_url)
-        img_resp.raise_for_status()
-        data = img_resp.content
+        # Stream the image so we can cap the download size and avoid
+        # loading an unbounded response into memory.
+        with client.stream("GET", image_url) as img_resp:
+            img_resp.raise_for_status()
+            # Check Content-Length up front when the server provides it.
+            declared = img_resp.headers.get("content-length")
+            if declared is not None:
+                try:
+                    if int(declared) > _MAX_IMAGE_BYTES:
+                        raise ProviderError(
+                            f"Bing image exceeds the {_MAX_IMAGE_BYTES}-byte "
+                            f"download cap (Content-Length={declared})"
+                        )
+                except ValueError:
+                    pass  # non-integer Content-Length; rely on byte count
+            data = bytearray()
+            for chunk in img_resp.iter_bytes():
+                data.extend(chunk)
+                if len(data) > _MAX_IMAGE_BYTES:
+                    raise ProviderError(
+                        f"Bing image exceeds the {_MAX_IMAGE_BYTES}-byte "
+                        "download cap while streaming"
+                    )
+            content_type = img_resp.headers.get("content-type", "image/jpeg")
 
     return FetchedImage(
-        data=data,
-        content_type=img_resp.headers.get("content-type", "image/jpeg"),
+        data=bytes(data),
+        content_type=content_type,
         suggested_extension=".jpg",
     )

@@ -177,3 +177,54 @@ def test_bing_rejects_unexpected_metadata(respx_mock: respx.router.MockRouter) -
     )
     with pytest.raises(ProviderError):
         bing.fetch({})
+
+
+# --- bing download size cap (item 8) ---
+
+
+def test_bing_rejects_oversize_via_content_length(
+    respx_mock: respx.router.MockRouter,
+) -> None:
+    """If Content-Length exceeds _MAX_IMAGE_BYTES, raise ProviderError."""
+    respx_mock.get(bing._METADATA_URL).mock(
+        return_value=httpx.Response(
+            200,
+            json={"images": [{"url": "/th?id=big.jpg"}]},
+        )
+    )
+    respx_mock.get("https://www.bing.com/th?id=big.jpg").mock(
+        return_value=httpx.Response(
+            200,
+            content=b"\x00" * 1024,
+            headers={
+                "content-type": "image/jpeg",
+                "content-length": str(bing._MAX_IMAGE_BYTES + 1),
+            },
+        )
+    )
+    with pytest.raises(ProviderError, match="download cap"):
+        bing.fetch({})
+
+
+def test_bing_rejects_oversize_while_streaming(
+    respx_mock: respx.router.MockRouter,
+) -> None:
+    """If the actual streamed bytes exceed _MAX_IMAGE_BYTES (no usable
+    Content-Length), raise ProviderError mid-stream."""
+    # Build a body larger than the cap so iter_bytes accumulates past it.
+    big_body = b"\x00" * (bing._MAX_IMAGE_BYTES + 1024)
+    respx_mock.get(bing._METADATA_URL).mock(
+        return_value=httpx.Response(
+            200,
+            json={"images": [{"url": "/th?id=huge.jpg"}]},
+        )
+    )
+    respx_mock.get("https://www.bing.com/th?id=huge.jpg").mock(
+        return_value=httpx.Response(
+            200,
+            content=big_body,
+            headers={"content-type": "image/jpeg"},
+        )
+    )
+    with pytest.raises(ProviderError, match="download cap"):
+        bing.fetch({})
