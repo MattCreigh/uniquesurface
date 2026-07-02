@@ -102,3 +102,47 @@ schema_version = 1
 """
     with pytest.raises(Exception):  # noqa: PT011
         config.load_config_from_string(bad)
+
+
+# --- Appendix A: legacy key tolerance + unknown key rejection ---
+
+
+def test_legacy_show_user_list_still_loads_and_warns(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A config containing the removed 'show_user_list' key must still
+    load (the validator strips it) rather than failing with extra=forbid."""
+    import logging
+    from usurface.config import load_config_from_string
+
+    toml = """
+[surface]
+schema_version = 1
+[surface.source]
+provider = "bing"
+[surface.login]
+clock_format = "hh:mm"
+accent_color = "#1d99f3"
+show_user_list = false
+"""
+    with caplog.at_level(logging.WARNING):
+        cfg = load_config_from_string(toml)
+    # The field is gone from the model; the config still loads.
+    assert cfg.surface.login.clock_format == "hh:mm"
+    assert not hasattr(cfg.surface.login, "show_user_list")
+
+
+def test_unknown_key_still_fails_validation() -> None:
+    """A genuinely unknown key must still be rejected (extra=forbid)."""
+    from usurface.config import load_config_from_string
+    import pytest
+
+    toml = """
+[surface]
+schema_version = 1
+bogus_key = true
+[surface.source]
+provider = "bing"
+"""
+    with pytest.raises(Exception, match="extra|bogus_key"):
+        load_config_from_string(toml)

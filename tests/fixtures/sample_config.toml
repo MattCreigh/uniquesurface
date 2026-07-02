@@ -16,7 +16,6 @@ password_character = "*"
 [surface.login]
 clock_format = "hh:mm"
 accent_color = "#1d99f3"
-show_user_list = true
 
 [surface.lock]
 on_idle_dim_seconds = 10

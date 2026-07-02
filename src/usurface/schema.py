@@ -87,11 +87,17 @@ class Fonts(_StrictModel):
 
 
 class Login(_StrictModel):
-    """Login-screen specific tokens."""
+    """Login-screen specific tokens.
+
+    ``show_user_list`` was removed: the SDDM Breeze theme computes the
+    user-list visibility from the user model (``userListModel.count``
+    vs ``disableAvatarsThreshold``) and exposes no ``theme.conf`` key
+    or QML property for us to rewrite safely. A legacy-key-stripping
+    validator tolerates the old key in existing config files.
+    """
 
     clock_format: str = Field(default="hh:mm")
     accent_color: str = Field(default="#1d99f3")
-    show_user_list: bool = Field(default=True)
 
     @field_validator("accent_color")
     @classmethod
@@ -99,6 +105,26 @@ class Login(_StrictModel):
         if not _HEX_COLOR_RE.match(value):
             raise ValueError(f"accent_color must be #RGB or #RRGGBB, got {value!r}")
         return value
+
+    # Removed keys that older config files may still contain. Stripped
+    # (with a warning) before validation so existing configs don't fail.
+    @model_validator(mode="before")
+    @classmethod
+    def _strip_removed_keys(cls, data: Any) -> Any:
+        removed = ("show_user_list",)
+        if isinstance(data, dict):
+            for key in removed:
+                if key in data:
+                    from usurface.logging import get_logger
+
+                    get_logger(__name__).warning(
+                        "config_ignored_key",
+                        section="surface.login",
+                        key=key,
+                        hint="removed: SDDM computes user-list visibility internally",
+                    )
+                    data.pop(key)
+        return data
 
 
 class Lock(_StrictModel):

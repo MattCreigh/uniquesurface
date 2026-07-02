@@ -44,6 +44,19 @@ class FontPatch:
     clock_format: str
 
 
+@dataclass(frozen=True)
+class LockPatch:
+    """Lock-screen tokens applied as structural QML edits.
+
+    ``on_idle_dim_seconds`` rewrites the ``fadeoutTimer`` interval
+    (seconds → milliseconds). ``suppress_wake_keypress`` is currently
+    a documented no-op (see A4 fallback in docs/config-reference.md).
+    """
+
+    on_idle_dim_seconds: int
+    suppress_wake_keypress: bool
+
+
 def _ensure_sentinels(text: str, block: str) -> str:
     """Ensure ``text`` contains the sentinel region with ``block`` inside.
 
@@ -195,3 +208,68 @@ def remove_sentinels(*, name: str, vendor_path: Path, manifest: Manifest) -> str
 
     write_tracked(manifest, vendor_path, pristine, mode=0o644)
     return f"{name}: restored to pristine"
+
+
+# --- lock-screen structural patching (A3: fadeoutTimer interval) ---
+
+# The fadeoutTimer in LockScreenUi.qml controls how long the lock screen
+# stays visible before dimming. Its interval is a literal in milliseconds.
+_FADEOUT_TIMER_INTERVAL_RE = re.compile(
+    r"(Timer\s*\{\s*id:\s*fadeoutTimer\s*\n\s*interval:\s*)\d+",
+    re.DOTALL,
+)
+
+
+def apply_lock_tokens(
+    *,
+    name: str,
+    vendor_path: Path,
+    manifest: Manifest,
+    patch: LockPatch,
+) -> str:
+    """Apply ``patch`` to a lock-screen QML file.
+
+    Currently rewrites the ``fadeoutTimer`` interval (seconds → ms) for
+    ``on_idle_dim_seconds``. If the file has no ``fadeoutTimer`` this is
+    a no-op skip (the file may simply not declare it).
+
+    A sentinel *comment* region records that the file is managed by
+    usurface (for drift detection / restore). The interval edit itself
+    is outside the sentinel region but is normalized in
+    :func:`drift.strip_sentinels` so it doesn't register as drift.
+
+    Returns a one-line description of the action taken.
+    """
+    if not vendor_path.exists():
+        raise FileNotFoundError(vendor_path)
+
+    pristine = extract.read_pristine(name)
+    if pristine is None:
+        raise RuntimeError(
+            f"no pristine template stored for {name}; run 'usurface install' first"
+        )
+
+    text = vendor_path.read_text(encoding="utf-8", errors="replace")
+
+    # Rewrite the fadeoutTimer interval: seconds → milliseconds.
+    interval_ms = patch.on_idle_dim_seconds * 1000
+    new_text, n = _FADEOUT_TIMER_INTERVAL_RE.subn(
+        rf"\g<1>{interval_ms}", text, count=1
+    )
+
+    if n == 0 and not _file_with_sentinels(text):
+        return f"{name}: no fadeoutTimer present; skipped"
+
+    # Sentinel marker (comment-only, valid QML) for drift tracking.
+    marker = (
+        f"// on_idle_dim_seconds={patch.on_idle_dim_seconds} "
+        f"suppress_wake_keypress={patch.suppress_wake_keypress}\n"
+    )
+    new_text = _ensure_sentinels(new_text, marker)
+
+    if new_text == text:
+        return f"{name}: no change"
+
+    new_bytes = new_text.encode("utf-8")
+    write_tracked(manifest, vendor_path, new_bytes, mode=0o644)
+    return f"{name}: wrote {len(new_bytes)} bytes (sha {sha256_bytes(new_bytes)[:12]}…)"

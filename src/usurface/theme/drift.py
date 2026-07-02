@@ -66,6 +66,14 @@ def strip_sentinels(text: str) -> str:
             r'\1"@usurface@managed@"',
             stripped,
         )
+    # Normalise the fadeoutTimer interval (A3: on_idle_dim_seconds) so
+    # our intentional edit doesn't register as drift.
+    stripped = re.sub(
+        r"(Timer\s*\{\s*id:\s*fadeoutTimer\s*\n\s*interval:\s*)\d+",
+        r"\g<1>@usurface@managed@",
+        stripped,
+        flags=re.DOTALL,
+    )
     return stripped
 
 

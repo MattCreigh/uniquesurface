@@ -28,9 +28,14 @@ from usurface.providers import (
 _log = get_logger(__name__)
 
 
-def default_backends() -> list[Backend]:
-    """Return the default list of backends in apply order."""
-    return [DesktopBackend(), LockBackend(), LoginBackend()]
+def default_backends(*, accent_color: str | None = None) -> list[Backend]:
+    """Return the default list of backends in apply order.
+
+    ``accent_color`` (from ``config.surface.login.accent_color``) is
+    forwarded to the login backend so it can write the SDDM theme.conf
+    ``color=`` key.
+    """
+    return [DesktopBackend(), LockBackend(), LoginBackend(accent_color=accent_color)]
 
 
 def verify_image(data: bytes) -> bytes:
@@ -107,7 +112,9 @@ def apply_to_surfaces(
         write_tracked(manifest, shared, clean_bytes, mode=0o644)
         plan.append(f"wrote {shared} (mode 0644)")
 
-    for backend in backends or default_backends():
+    for backend in backends or default_backends(
+        accent_color=expanded.surface.login.accent_color
+    ):
         if dry_run:
             plan.extend(backend.dry_run_plan(shared))
         else:
@@ -126,7 +133,12 @@ def apply_to_surfaces(
             if vendor_path.is_file():
                 plan.append(f"patch QML {name} ({vendor_path}) with font/theme tokens")
     else:
-        from usurface.theme.qml_patch import FontPatch, apply_font_tokens
+        from usurface.theme.qml_patch import (
+            FontPatch,
+            LockPatch,
+            apply_font_tokens,
+            apply_lock_tokens,
+        )
         from usurface.theme import drift
 
         font_patch = FontPatch(
@@ -135,6 +147,10 @@ def apply_to_surfaces(
             password_character=expanded.surface.fonts.password_character,
             clock_format=expanded.surface.login.clock_format,
         )
+        lock_patch = LockPatch(
+            on_idle_dim_seconds=expanded.surface.lock.on_idle_dim_seconds,
+            suppress_wake_keypress=expanded.surface.lock.suppress_wake_keypress,
+        )
 
         for name, vendor_path in extract.DEFAULT_TARGETS:
             if not vendor_path.is_file():
@@ -142,7 +158,7 @@ def apply_to_surfaces(
             try:
                 # Handle template drift if any
                 drift.handle_drift(name, vendor_path)
-                # Patch
+                # Patch font tokens on all targets.
                 msg = apply_font_tokens(
                     name=name,
                     vendor_path=vendor_path,
@@ -150,6 +166,17 @@ def apply_to_surfaces(
                     patch=font_patch,
                 )
                 plan.append(f"QML backend '{name}' applied: {msg}")
+                # Patch lock-specific structural tokens on lockscreen
+                # targets only (the fadeoutTimer lives in
+                # LockScreenUi.qml).
+                if name == "plasma_lockscreen_ui":
+                    lmsg = apply_lock_tokens(
+                        name=name,
+                        vendor_path=vendor_path,
+                        manifest=manifest,
+                        patch=lock_patch,
+                    )
+                    plan.append(f"QML lock '{name}': {lmsg}")
             except drift.DriftError as exc:
                 # Drifted vendor file: skip patching but keep going so
                 # other surfaces still apply. The user must explicitly

@@ -1,9 +1,9 @@
 """Login-screen wallpaper backend.
 
 Patches the SDDM Breeze theme's ``theme.conf`` to point at the chosen
-wallpaper. QML font / theme-token patching lives in
-:mod:`usurface.theme.qml_patch` and is invoked by the orchestrator,
-not here.
+wallpaper and (optionally) set the accent/solid ``color=`` key. QML
+font / theme-token patching lives in :mod:`usurface.theme.qml_patch`
+and is invoked by the orchestrator, not here.
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ from usurface.backends.base import BackendError
 from usurface.manifest import Manifest
 
 _BG_LINE_RE = re.compile(r"^(\s*background\s*=\s*).*$", re.MULTILINE)
+_COLOR_LINE_RE = re.compile(r"^(\s*color\s*=\s*).*$", re.MULTILINE)
 _THEME_CONF_PATH = Path("/usr/share/sddm/themes/breeze/theme.conf")
 _DEFAULT_COMMENT = "# managed by usurface"
 
@@ -23,11 +24,18 @@ _DEFAULT_COMMENT = "# managed by usurface"
 class LoginBackend:
     """Writes the SDDM theme.conf ``background=`` line.
 
+    If ``accent_color`` is provided, also writes ``color=`` (the SDDM
+    Breeze theme's solid-background colour, read in Main.qml as
+    ``config.color`` → ``sceneBackgroundColor``).
+
     If ``theme.conf`` does not exist (e.g. an unsupported SDDM theme
     is installed) the backend logs and does nothing.
     """
 
     name = "login"
+
+    def __init__(self, *, accent_color: str | None = None) -> None:
+        self._accent_color = accent_color
 
     def apply(self, manifest: Manifest, wallpaper: Path) -> None:
         if not _THEME_CONF_PATH.exists():
@@ -37,9 +45,10 @@ class LoginBackend:
     def dry_run_plan(self, wallpaper: Path) -> list[str]:
         if not _THEME_CONF_PATH.exists():
             return [f"# {self.name}: {_THEME_CONF_PATH} not present; skipped"]
-        return [
-            f"edit {_THEME_CONF_PATH}: set background={wallpaper}",
-        ]
+        plan = [f"edit {_THEME_CONF_PATH}: set background={wallpaper}"]
+        if self._accent_color is not None:
+            plan.append(f"edit {_THEME_CONF_PATH}: set color={self._accent_color}")
+        return plan
 
     def _write_conf(self, manifest: Manifest, wallpaper: Path) -> None:
         target = wallpaper.resolve()
@@ -52,15 +61,30 @@ class LoginBackend:
                 ),
             )
         text = _THEME_CONF_PATH.read_text(encoding="utf-8")
-        if _BG_LINE_RE.search(text):
-            new_text = _BG_LINE_RE.sub(rf"\g<1>{target}", text)
-        else:
-            sep = "" if text.endswith("\n") else "\n"
-            new_text = f"{text}{sep}{_DEFAULT_COMMENT}\nbackground={target}\n"
+        new_text = _set_key(text, _BG_LINE_RE, "background", str(target))
+        if self._accent_color is not None:
+            new_text = _set_key(
+                new_text, _COLOR_LINE_RE, "color", self._accent_color
+            )
 
         from usurface.manifest import write_tracked
 
-        write_tracked(manifest, _THEME_CONF_PATH, new_text.encode("utf-8"), mode=0o644)
+        write_tracked(
+            manifest, _THEME_CONF_PATH, new_text.encode("utf-8"), mode=0o644
+        )
+
+
+def _set_key(text: str, line_re: re.Pattern[str], key: str, value: str) -> str:
+    """Set ``key=value`` in a theme.conf-style INI text.
+
+    If the key already exists, replace its value via ``line_re``; otherwise
+    append ``key=value`` (with the managed-by-usurface comment) on a new
+    line. Preserves all other lines.
+    """
+    if line_re.search(text):
+        return line_re.sub(rf"\g<1>{value}", text)
+    sep = "" if text.endswith("\n") else "\n"
+    return f"{text}{sep}{_DEFAULT_COMMENT}\n{key}={value}\n"
 
 
 def _can_write(path: Path) -> bool:

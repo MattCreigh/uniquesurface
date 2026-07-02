@@ -210,3 +210,94 @@ def test_skip_when_no_managed_properties(tmp_path: Path, monkeypatch: pytest.Mon
     assert vendor.read_text(encoding="utf-8") == qml_no_props
     assert "pragma Singleton" not in vendor.read_text(encoding="utf-8")
     assert "QtObject" not in vendor.read_text(encoding="utf-8")
+
+
+# --- Appendix A3: lock token patching (fadeoutTimer interval) ---
+
+
+def test_lock_patch_rewrites_fadeout_timer_interval(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """apply_lock_tokens rewrites the fadeoutTimer interval seconds->ms."""
+    qml = (
+        "import QtQuick\n"
+        "Item {\n"
+        "    Timer {\n"
+        "        id: fadeoutTimer\n"
+        "        interval: 10000\n"
+        "        onTriggered: {}\n"
+        "    }\n"
+        "}\n"
+    )
+    templates = tmp_path / "templates"
+    templates.mkdir()
+    (templates / "plasma_lockscreen_ui.qml").write_text(qml, encoding="utf-8")
+    monkeypatch.setattr(paths, "templates_dir", lambda: templates)
+
+    vendor = tmp_path / "vendor" / "LockScreenUi.qml"
+    vendor.parent.mkdir()
+    vendor.write_text(qml, encoding="utf-8")
+
+    m = Manifest(tmp_path / "manifest.jsonl")
+    msg = qml_patch.apply_lock_tokens(
+        name="plasma_lockscreen_ui",
+        vendor_path=vendor,
+        manifest=m,
+        patch=qml_patch.LockPatch(on_idle_dim_seconds=30, suppress_wake_keypress=True),
+    )
+    assert "wrote" in msg
+    text = vendor.read_text(encoding="utf-8")
+    assert "interval: 30000" in text
+    assert "interval: 10000" not in text
+    # Sentinel marker present (comment-only).
+    assert qml_patch.SENTINEL_START in text
+
+
+def test_lock_patch_idempotent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Re-applying the same lock patch is a no-op."""
+    qml = (
+        "import QtQuick\nItem {\n"
+        "    Timer {\n"
+        "        id: fadeoutTimer\n"
+        "        interval: 10000\n"
+        "        onTriggered: {}\n"
+        "    }\n}\n"
+    )
+    templates = tmp_path / "templates"
+    templates.mkdir()
+    (templates / "plasma_lockscreen_ui.qml").write_text(qml, encoding="utf-8")
+    monkeypatch.setattr(paths, "templates_dir", lambda: templates)
+    vendor = tmp_path / "LockScreenUi.qml"
+    vendor.parent.mkdir(parents=True, exist_ok=True)
+    vendor.write_text(qml, encoding="utf-8")
+    m = Manifest(tmp_path / "manifest.jsonl")
+    p = qml_patch.LockPatch(on_idle_dim_seconds=20, suppress_wake_keypress=True)
+    qml_patch.apply_lock_tokens(
+        name="plasma_lockscreen_ui", vendor_path=vendor, manifest=m, patch=p
+    )
+    msg = qml_patch.apply_lock_tokens(
+        name="plasma_lockscreen_ui", vendor_path=vendor, manifest=m, patch=p
+    )
+    assert "no change" in msg
+
+
+def test_lock_patch_skips_when_no_timer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """If the QML has no fadeoutTimer, the lock patch skips."""
+    qml = "import QtQuick\nItem {\n    property int x: 1\n}\n"
+    templates = tmp_path / "templates"
+    templates.mkdir()
+    (templates / "plasma_lockscreen_ui.qml").write_text(qml, encoding="utf-8")
+    monkeypatch.setattr(paths, "templates_dir", lambda: templates)
+    vendor = tmp_path / "LockScreenUi.qml"
+    vendor.parent.mkdir(parents=True, exist_ok=True)
+    vendor.write_text(qml, encoding="utf-8")
+    m = Manifest(tmp_path / "manifest.jsonl")
+    msg = qml_patch.apply_lock_tokens(
+        name="plasma_lockscreen_ui",
+        vendor_path=vendor,
+        manifest=m,
+        patch=qml_patch.LockPatch(on_idle_dim_seconds=30, suppress_wake_keypress=True),
+    )
+    assert "skipped" in msg
+    # File unchanged.
+    assert vendor.read_text(encoding="utf-8") == qml
