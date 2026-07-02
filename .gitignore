@@ -37,7 +37,11 @@ htmlcov/
 *.swp
 *.swo
 
-# usurface state
+# usurface runtime state (never commit these — they're machine-specific)
 *.bak
 *.drift
-templates/
+# Pristine QML templates extracted at runtime into the per-user state dir
+# (~/.local/state/usurface/templates/). Anchor to avoid matching source
+# dirs like src/usurface/systemd/templates/.
+/**/templates/*.qml
+*.debian.tar.xz

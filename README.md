@@ -1,88 +1,195 @@
 <div align="center">
   <h1>✨ uniquesurface ✨</h1>
-  <p><strong>Unified Plasma 6 surface set manager</strong></p>
+  <p><strong>Unified Plasma 6 surface-set manager — desktop, lock screen, and SDDM login, in sync.</strong></p>
 
   [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
   [![KDE Plasma 6](https://img.shields.io/badge/KDE-Plasma%206-1d99f3.svg?logo=kde)](https://kde.org/plasma-desktop/)
   [![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/License-PolyForm%20Noncommercial-yellow.svg)](LICENSE)
-  [![Tests](https://img.shields.io/badge/tests-77%20passed-success)](https://pytest.org/)
+  [![Tests](https://img.shields.io/badge/tests-86%20passed-success)](https://pytest.org/)
 </div>
 
 > [!NOTE]
 > **AI-Assisted Development**
-> Portions of this codebase were developed with the assistance of generative AI. While the code is fully tested and functionally robust, please review before deploying in mission-critical environments.
+> Portions of this codebase were developed with the assistance of generative AI. The code is fully tested, but please review it before deploying in mission-critical environments.
 
-One CLI, one configuration file, **three surfaces**: your desktop wallpaper, lock screen wallpaper, and SDDM login screen wallpaper, beautifully synchronized.
+One CLI, one config file, **three surfaces**: your desktop wallpaper, lock-screen wallpaper, and SDDM login-screen wallpaper, kept beautifully synchronized.
+
+---
 
 ## 🌟 Why `uniquesurface`?
 
-Existing wallpaper tools like `variety` or `nitrogen` only handle the desktop, and GUI-only projects like `PlasmaWallpaperManager` often patch vendor files irreversibly, frequently bricking systems after an update.
+Existing wallpaper tools like `variety` or `nitrogen` only handle the desktop. GUI projects like `PlasmaWallpaperManager` often patch vendor files irreversibly and brick systems after a KDE update.
 
-`uniquesurface` is the **CLI-first, provider-extensible, reversible, systemd-automated** option for KDE Plasma 6 users who want their desktop, lock, and login screens to be cohesive and trust their visuals will stay intact.
+`uniquesurface` is the **CLI-first, provider-extensible, reversible, systemd-automated** option for KDE Plasma 6 users who want a cohesive look across all three surfaces — and trust that their visuals (and their login screen) will stay intact.
 
-### ✨ Key Features
-- **Total Cohesion**: Set one wallpaper and automatically apply it to SDDM, the lock screen, and the desktop simultaneously.
-- **Provider Registry**: Built-in support for Bing Picture of the Day, local files, and solid colors. Extensible via a `pluggy` plugin model.
-- **Atomic Rollbacks**: Every file change is written to an append-only undo log. Made a mistake? `usurface restore` rolls back to a pristine state.
-- **Safe QML Patching**: Uses a sentinel-based QML patcher with drift detection. If an upstream KDE update alters a file, `uniquesurface` will safely detect the drift instead of bricking your login screen.
-- **Automated Refreshes**: Automatically installs systemd user timers for a daily wallpaper refresh.
-- **Strict Configuration**: Pydantic-powered TOML schema ensures zero typos and deterministic execution.
+### ✨ Key features
+
+- **Total cohesion** — one wallpaper applied to desktop, lock screen, and SDDM login at once.
+- **Provider registry** — built-in Bing Picture of the Day, local files, and solid colours; extensible via a [`pluggy`](https://pluggy.readthedocs.io/) plugin model.
+- **Atomic rollbacks** — every file change is written to an append-only undo log. `usurface restore` rolls back to a pristine state.
+- **Safe QML patching** — sentinel-based patching with drift detection. If an upstream KDE update alters a file, `uniquesurface` detects the drift instead of bricking your login screen.
+- **Automated refreshes** — installs a systemd user timer for a daily wallpaper refresh.
+- **Strict configuration** — pydantic-validated TOML schema catches typos before they reach your system.
+
+---
 
 ## 🚀 Quickstart
 
-### Installation
+### Requirements
 
-Install the package via `uv`:
+- **KDE Plasma 6** (tested on 6.7 / Neon 24.04)
+- **Python 3.12+**
+- `kwriteconfig6` and `qdbus6` (provided by `plasma-workspace`)
+- [`uv`](https://docs.astral.sh/uv/) (recommended installer) or `pip`
+
+### Install
+
 ```sh
-uv tool install /home/matt/Projects/background_manager
+# from a local clone
+uv tool install .
+
+# …or directly from GitHub
+uv tool install git+https://github.com/MattCreigh/uniquesurface.git
 ```
 
-### Setup & Migration
+This installs the `usurface` console script on your PATH.
 
-If you are migrating from a previous shell-based setup, generate a starter config first:
+### First-time setup
+
+Generate a starter config:
+
 ```sh
-usurface migrate-from-shell
+usurface config init
 ```
 
-Install the bundled fonts, QML templates, and enable the systemd timer. *(Note: this step uses `sudo` internally for system-wide font and directory setup, but safely runs systemd user services under your own desktop user.)*
+Edit `~/.config/usurface/config.toml` to pick a provider (default: Bing POTD). See the [config reference](docs/config-reference.md) for every key.
+
+Then install the bundled fonts, shared wallpaper directory, and systemd timer:
+
 ```sh
 sudo usurface install
 ```
 
-### Usage
+> The `sudo` is only for the system-wide font and `/usr/local/share/wallpapers` steps; the systemd user timer is enabled under your own desktop user.
 
-Preview the changes the tool will make:
+### Daily usage
+
 ```sh
-usurface apply --dry-run
+usurface apply            # apply the configured wallpaper to all three surfaces
+usurface apply --dry-run  # preview without writing
+usurface status           # show config + recent manifest entries
+usurface doctor           # verify drift, fonts, config, permissions
+usurface restore          # revert every recorded change
 ```
 
-Apply your configured wallpaper to all three surfaces:
+Pause/resume the daily timer without removing the units:
+
 ```sh
-usurface apply
+usurface pause
+usurface resume
 ```
 
-Check the health of your installation (verifies drift, font cache, config, and file permissions):
+---
+
+## 🧩 Providers
+
+List available providers:
+
 ```sh
-usurface doctor
+usurface provider list
+#   bing    [built-in]   Bing Picture of the Day.
+#   file    [built-in]   Local image file.
+#   solid   [built-in]   Solid colour or gradient.
 ```
 
-Revert changes if needed:
+Get details on one:
+
 ```sh
-usurface restore
+usurface provider info bing
 ```
+
+Adding your own provider is a single `pluggy` hook — see [`src/usurface/providers/README.md`](src/usurface/providers/README.md).
+
+---
+
+## ⚙️ Configuration
+
+Config lives at `~/.config/usurface/config.toml`. A minimal example:
+
+```toml
+[surface]
+schema_version = 1
+
+[surface.source]
+provider = "bing"
+
+[surface.source.options]
+mkt = "en-US"
+resolution = "1920x1080"
+index = 0          # 0 = today, 1 = yesterday, …
+
+[surface.fonts]
+family = "Inter"
+weight = "Normal"
+password_character = "●"
+
+[surface.behaviour]
+shared_dir = "/usr/local/share/wallpapers"
+user_dir = "~/.local/state/usurface"
+```
+
+Full reference: [`docs/config-reference.md`](docs/config-reference.md).
+
+---
+
+## 🔧 How it works
+
+`apply` runs this pipeline:
+
+1. **Fetch** the image from the configured provider.
+2. **Verify** it with Pillow (decode + re-encode, strip metadata).
+3. **Write** the image to `~/.local/state/usurface/last_wallpaper.jpg` and the SDDM-readable `/usr/local/share/wallpapers/last_wallpaper.jpg`.
+4. **Apply** to each surface:
+   - **Desktop** — `kwriteconfig6` on `plasma-org.kde.plasma.desktop-appletsrc` + `qdbus6` refresh.
+   - **Lock** — `kwriteconfig6` on `kscreenlockerrc` (`[Greeter][Wallpaper][org.kde.image][General] Image=`).
+   - **Login (SDDM)** — rewrites `background=` in the Breeze theme's `theme.conf` (needs root).
+5. **Patch QML** for font/theme tokens where the vendor file declares them (skipped otherwise — never appends a block that would break the greeter).
+6. **Record** every change in the manifest for `restore`.
+
+Design principles:
+
+- **No shell scripts** — 100% Python with a full test suite.
+- **Atomic I/O** — temp-then-replace with `fsync`; no corrupted Plasma state on power loss.
+- **Idempotent** — re-running produces the same state, no duplicates.
+- **Reversible** — every write is tracked; `restore` undoes it.
+
+---
 
 ## 📖 Documentation
 
-- [**PLAN.md**](PLAN.md) — The comprehensive design, implementation specification, and architecture overview.
-- [**Config Reference**](docs/config-reference.md) — Documentation for every configuration key.
-- [**Migration Guide**](docs/migration-from-shell.md) — Migrating from existing shell-based implementations.
+- [**PLAN.md**](PLAN.md) — design, architecture, and implementation spec.
+- [**Config reference**](docs/config-reference.md) — every configuration key.
+- [**Migration guide**](docs/migration-from-shell.md) — coming from a shell-based setup.
 
-## 🛠️ Under the Hood
+---
 
-`uniquesurface` strictly adheres to Linux and XDG standards:
-- **No shell scripts**: 100% Python implementation with rigorous test coverage.
-- **Atomic I/O**: Temporary-then-replace logic with `fsync` guarantees no corrupted Plasma state during power loss.
-- **Idempotent**: Re-running commands will safely produce the same state without duplicate operations.
+## 🧪 Development
+
+```sh
+git clone https://github.com/MattCreigh/uniquesurface.git
+cd uniquesurface
+uv sync            # create venv + install dev deps
+uv run pytest -q   # run the test suite (86 tests)
+uv run ruff check src tests
+```
+
+---
+
+## 📜 License
+
+[PolyForm Noncommercial 1.0.0](LICENSE) — free for personal, non-commercial use.
+
+---
 
 <div align="center">
   <i>Crafted with 🩵 for KDE Plasma.</i>

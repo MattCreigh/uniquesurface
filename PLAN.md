@@ -239,10 +239,7 @@ background_manager/
 │       │   └── extract.py           (copy pristine vendor QML into state dir)
 │       ├── systemd/
 │       │   ├── __init__.py
-│       │   ├── writer.py            (renders .service + .timer from templates)
-│       │   └── templates/
-│       │       ├── usurface-pull.service.j2
-│       │       └── usurface-pull.timer.j2
+│       │   └── writer.py            (renders .service + .timer from inline templates)
 │       └── logging.py
 ├── tests/
 │   ├── conftest.py
