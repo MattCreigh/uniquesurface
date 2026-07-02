@@ -39,9 +39,13 @@ DEFAULT_TARGETS: list[tuple[str, Path]] = [
 def extract(targets: Iterable[tuple[str, Path]] | None = None) -> list[Path]:
     """Copy each target vendor file into the state-dir templates/.
 
+    Sentinel markers from a previous usurface patch are stripped before
+    storing so the pristine baseline is the un-patched vendor content.
     Returns the list of destination paths actually written (skipped if
     the vendor file does not exist).
     """
+    from usurface.theme.drift import strip_sentinels
+
     out: list[Path] = []
     dest_dir = paths.templates_dir()
     dest_dir.mkdir(parents=True, exist_ok=True)
@@ -49,8 +53,9 @@ def extract(targets: Iterable[tuple[str, Path]] | None = None) -> list[Path]:
         if not src.is_file():
             continue
         dest = dest_dir / f"{name}.qml"
-        data = src.read_bytes()
-        dest.write_bytes(data)
+        text = src.read_text(encoding="utf-8", errors="replace")
+        clean = strip_sentinels(text)
+        dest.write_bytes(clean.encode("utf-8"))
         out.append(dest)
     return out
 

@@ -102,9 +102,11 @@ def test_strip_sentinels_removes_block() -> None:
     assert "header" in out and "footer" in out
 
 
-def test_handle_drift_saves_backup_and_updates_pristine(
+def test_handle_drift_raises_instead_of_adopting(
     seeded_templates: Path, tmp_path: Path
 ) -> None:
+    """On drift, handle_drift must create a backup and raise DriftError —
+    it must NOT adopt the drifted content as the new pristine baseline."""
     # 1. First run: No drift, returns None and makes no backup
     backup = drift.handle_drift("sddm_login", seeded_templates)
     assert backup is None
@@ -114,12 +116,17 @@ def test_handle_drift_saves_backup_and_updates_pristine(
     modified_text = original_text + "\n// modified upstream\n"
     seeded_templates.write_text(modified_text, encoding="utf-8")
 
-    # 3. Second run: Drift detected. Should return backup path and resolve drift.
-    backup = drift.handle_drift("sddm_login", seeded_templates)
-    assert backup is not None
-    assert backup.exists()
-    assert backup.read_text(encoding="utf-8") == modified_text
+    # 3. Second run: Drift detected. Must raise DriftError (not adopt).
+    with pytest.raises(drift.DriftError, match="drift detected for 'sddm_login'"):
+        drift.handle_drift("sddm_login", seeded_templates)
 
-    # 4. Verify that templates were updated and check() now passes
+    # 4. A backup was created with the drifted content.
+    backups = list(
+        seeded_templates.parent.glob("Login.qml.usurface.drift.*")
+    )
+    assert len(backups) >= 1
+    assert backups[0].read_text(encoding="utf-8") == modified_text
+
+    # 5. The stored pristine was NOT updated — drift still detected.
     report = drift.check("sddm_login", seeded_templates)
-    assert report.on_disk_matches_pristine is True
+    assert report.on_disk_matches_pristine is False

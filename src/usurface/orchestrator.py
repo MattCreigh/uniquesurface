@@ -150,6 +150,21 @@ def apply_to_surfaces(
                     patch=font_patch,
                 )
                 plan.append(f"QML backend '{name}' applied: {msg}")
+            except drift.DriftError as exc:
+                # Drifted vendor file: skip patching but keep going so
+                # other surfaces still apply. The user must explicitly
+                # accept the new vendor content (qml-update-templates
+                # or apply --adopt-drift).
+                plan.append(f"QML backend '{name}' DRIFTED: {exc}")
+                plan.append(
+                    "  hint: run `usurface qml-update-templates` "
+                    "to accept the new vendor content"
+                )
+                _log.warning(
+                    "qml_backend_drift",
+                    backend=name,
+                    error=str(exc),
+                )
             except BackendError as exc:
                 plan.append(f"QML backend '{name}' FAILED: {exc}")
                 if exc.hint:

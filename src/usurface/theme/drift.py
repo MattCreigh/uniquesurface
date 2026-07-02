@@ -115,12 +115,52 @@ def check(
     )
 
 
+class DriftError(RuntimeError):
+    """Raised when a vendor QML file has drifted from the stored pristine.
+
+    The drifted content is NOT automatically adopted as the new pristine
+    baseline — the user must explicitly consent by running
+    ``usurface qml-update-templates`` (or ``usurface apply --adopt-drift``).
+    The error message names the file, both SHAs, the backup path, and the
+    remediation command.
+    """
+
+    def __init__(
+        self,
+        *,
+        name: str,
+        vendor_path: Path,
+        backup_path: Path,
+        pristine_sha: str | None,
+        on_disk_sha: str | None,
+    ) -> None:
+        self.name = name
+        self.vendor_path = vendor_path
+        self.backup_path = backup_path
+        self.pristine_sha = pristine_sha
+        self.on_disk_sha = on_disk_sha
+        super().__init__(
+            f"QML drift detected for '{name}' ({vendor_path}).\n"
+            f"  pristine sha : {pristine_sha or 'missing'}\n"
+            f"  on-disk sha  : {on_disk_sha or 'missing'}\n"
+            f"  backup       : {backup_path}\n"
+            f"The drifted content was NOT adopted as the new baseline. "
+            f"To accept the new vendor content, run "
+            f"`usurface qml-update-templates` (or `usurface apply --adopt-drift`)."
+        )
+
+
 def handle_drift(name: str, vendor_path: Path) -> Path | None:
     """Check for drift. If detected:
     1. Save the current file as `<path>.usurface.drift.<ts>`.
-    2. Re-extract a fresh pristine template from the running system (stripped of sentinels)
-       and update the stored pristine.
-    3. If they still don't match, raise RuntimeError.
+    2. Log a prominent warning naming the file and backup.
+    3. Raise :class:`DriftError` instructing the user to run
+       ``usurface qml-update-templates`` (or ``usurface apply --adopt-drift``)
+       to explicitly accept the new vendor content.
+
+    The drifted content is NEVER silently adopted as the new pristine
+    baseline — that would let any third-party (or hostile) modification
+    become the trusted baseline without consent.
 
     Returns the path to the backup file if drift was handled, or None.
     """
@@ -152,21 +192,15 @@ def handle_drift(name: str, vendor_path: Path) -> Path | None:
             "Please run as root/sudo to patch system files."
         ) from exc
 
-    # 2. Re-extract pristine template (stripping sentinels first)
-    text = vendor_path.read_text(encoding="utf-8", errors="replace")
-    stripped_text = strip_sentinels(text)
-    stripped_bytes = stripped_text.encode("utf-8")
-
-    extract.copy_pristine_bytes(name, stripped_bytes)
-
-    # 3. Check again
-    new_report = check(name, vendor_path)
-    if not new_report.on_disk_matches_pristine:
-        raise RuntimeError(
-            f"Drift check failed for '{name}' even after template re-extraction. "
-            f"Pristine SHA: {new_report.pristine_sha}, Stripped SHA: {new_report.on_disk_stripped_sha}"
-        )
-    return backup_path
+    # 2. Refuse to adopt the drifted content as pristine. Raise so the
+    #    orchestrator can skip this file and report the remediation.
+    raise DriftError(
+        name=name,
+        vendor_path=vendor_path,
+        backup_path=backup_path,
+        pristine_sha=report.pristine_sha,
+        on_disk_sha=report.on_disk_stripped_sha,
+    )
 
 
 def on_disk_file_hash(path: Path) -> str | None:
