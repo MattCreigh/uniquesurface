@@ -27,7 +27,7 @@ dependencies = [
 ]
 
 [project.scripts]
-usurface = "usurface.cli:main"
+usurface = "usurface.cli:run"
 
 [dependency-groups]
 dev = [

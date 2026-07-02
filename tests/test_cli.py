@@ -246,3 +246,93 @@ def os_environ(name: str) -> str:
     import os
 
     return os.environ[name]
+
+
+# --- item 7: login_surface_needs_root helper + excepthook wrapper ---
+
+
+def test_login_surface_needs_root_false_when_not_present(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """If the SDDM theme.conf doesn't exist, the helper returns False."""
+    from usurface.backends import login as login_mod
+
+    monkeypatch.setattr(login_mod, "_THEME_CONF_PATH", tmp_path / "nope.conf")
+    assert login_mod.login_surface_needs_root() is False
+
+
+def test_login_surface_needs_root_true_when_unwritable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """If theme.conf exists, is unwritable, and euid != 0, returns True."""
+    from usurface.backends import login as login_mod
+
+    conf = tmp_path / "theme.conf"
+    conf.write_text("[General]\n")
+    conf.chmod(0o444)  # read-only
+    monkeypatch.setattr(login_mod, "_THEME_CONF_PATH", conf)
+    monkeypatch.setattr(login_mod.os, "geteuid", lambda: 1000)
+    # _can_write checks os.access; with 0o444 and non-root, it's False.
+    assert login_mod.login_surface_needs_root() is True
+
+
+def test_login_surface_needs_root_false_when_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Even if unwritable, euid 0 means root can write -> False."""
+    from usurface.backends import login as login_mod
+
+    conf = tmp_path / "theme.conf"
+    conf.write_text("[General]\n")
+    conf.chmod(0o444)
+    monkeypatch.setattr(login_mod, "_THEME_CONF_PATH", conf)
+    monkeypatch.setattr(login_mod.os, "geteuid", lambda: 0)
+    assert login_mod.login_surface_needs_root() is False
+
+
+def test_run_wrapper_installs_excepthook_and_renders_clierror(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The run() entry-point wrapper installs the excepthook so a CLIError
+    renders as a clean 'error: ...' block. CliRunner bypasses sys.excepthook,
+    so we verify via the installed hook directly."""
+    import subprocess
+    import sys
+
+    code = (
+        "from usurface.cli import run, CLIError\n"
+        "raise CLIError('bad thing', hint='try this')\n"
+    )
+    subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True
+    )
+    # Without the excepthook installed (run() not called), this is an
+    # unhandled CLIError traceback. Now verify run() installs the hook:
+    code2 = (
+        "import sys\n"
+        "from usurface.cli import run, _install_excepthook, CLIError\n"
+        "_install_excepthook()\n"
+        "raise CLIError('bad thing', hint='try this')\n"
+    )
+    proc2 = subprocess.run(
+        [sys.executable, "-c", code2], capture_output=True, text=True
+    )
+    assert proc2.returncode == 1
+    assert "error: bad thing" in proc2.stderr
+    assert "try this" in proc2.stderr
+    assert "Traceback" not in proc2.stderr
+
+
+def test_usurface_version_via_run(tmp_path: Path) -> None:
+    """`usurface --version` works via the run() entry point wrapper."""
+    import subprocess
+    import sys
+
+    proc = subprocess.run(
+        [sys.executable, "-m", "usurface", "--version"],
+        capture_output=True,
+        text=True,
+        env={"PATH": "/usr/bin:/bin"},
+    )
+    assert proc.returncode == 0
+    assert "uniquesurface" in proc.stdout

@@ -72,3 +72,18 @@ def _can_write(path: Path) -> bool:
     if path.exists():
         return os.access(path, os.W_OK)
     return os.access(path.parent, os.W_OK)
+
+
+def login_surface_needs_root() -> bool:
+    """Return True if the SDDM login surface is present but not writable
+    by the current user (i.e. the apply step for login will require root).
+
+    Encapsulates the path-existence + writability + euid check so the
+    CLI doesn't need to import the private ``_THEME_CONF_PATH`` or
+    reimplement ``_can_write``.
+    """
+    if not _THEME_CONF_PATH.exists():
+        return False
+    if os.geteuid() == 0:
+        return False
+    return not _can_write(_THEME_CONF_PATH)

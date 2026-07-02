@@ -124,22 +124,14 @@ def apply(dry_run: bool, config_path: Path | None) -> None:
     # Pre-flight: if we are not root and the login surface (SDDM theme)
     # is present, the login backend will fail. Warn the user clearly
     # but continue so the user-mode surfaces still get updated.
-    from usurface.backends.login import _THEME_CONF_PATH
-    import os as _os
+    from usurface.backends.login import login_surface_needs_root
 
-    if not dry_run and _THEME_CONF_PATH.exists():
-        try:
-            writable = _os.access(_THEME_CONF_PATH, _os.W_OK) or _os.access(
-                _THEME_CONF_PATH.parent, _os.W_OK
-            )
-        except OSError:
-            writable = False
-        if not writable and _os.geteuid() != 0:
-            click.echo(
-                "Note: login (SDDM) surface requires root; "
-                "that step will be skipped or fail unless you re-run with sudo.",
-                err=True,
-            )
+    if not dry_run and login_surface_needs_root():
+        click.echo(
+            "Note: login (SDDM) surface requires root; "
+            "that step will be skipped or fail unless you re-run with sudo.",
+            err=True,
+        )
 
     manifest = Manifest()
     plan = apply_to_surfaces(cfg, manifest=manifest, dry_run=dry_run)
@@ -589,8 +581,18 @@ def _detect_existing_setup() -> dict[str, str]:
     return out
 
 
-_install_excepthook()
+def run() -> None:
+    """Console-script entry point.
+
+    Installs the user-facing excepthook (so unexpected errors render a
+    clean ``error: ...`` block instead of a traceback) and dispatches to
+    the Click group. Kept as a wrapper rather than run at import time so
+    importing ``usurface.cli`` (e.g. in tests) doesn't install a global
+    side effect.
+    """
+    _install_excepthook()
+    main()
 
 
 if __name__ == "__main__":
-    main()
+    run()
