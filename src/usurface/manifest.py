@@ -4,6 +4,14 @@ Every file the orchestrator writes is recorded as one JSONL entry. The
 log is append-only; ``restore()`` walks newest-first and replays the
 inverse op (``write`` records restore the previous SHA-256 by writing
 back the captured bytes; ``delete`` records remove the file again).
+
+Undo history is bounded: after a successful ``apply``, the log is
+compacted to the most recent ``_RETENTION_ENTRIES`` entries (see
+:func:`compact`), and snapshots no longer referenced by any surviving
+entry are pruned. A full ``restore`` empties the log and prunes every
+snapshot; a partial ``restore --to <ts>`` keeps entries with
+``ts <= to`` and prunes only the snapshots those dropped entries
+referenced.
 """
 
 from __future__ import annotations
@@ -18,6 +26,12 @@ from typing import Any, Literal
 from usurface import paths
 
 EntryOp = Literal["write", "delete"]
+
+# Maximum number of manifest entries retained after a compaction. Older
+# entries beyond this threshold are dropped along with their snapshots,
+# bounding undo history so the log and snapshot dir cannot grow forever
+# under the daily systemd timer.
+_RETENTION_ENTRIES = 200
 
 
 @dataclass(frozen=True)
@@ -168,11 +182,23 @@ def write_tracked(
     )
 
 
-def restore(manifest: Manifest, *, to: str | None = None) -> int:
+def restore(
+    manifest: Manifest,
+    *,
+    to: str | None = None,
+    snapshots_dir: Path | None = None,
+) -> int:
     """Revert every recorded op, newest-first.
 
     Returns the number of entries restored. Stops at ``to`` (timestamp)
-    if provided.
+    if provided — entries with ``ts > to`` are reverted, entries with
+    ``ts <= to`` are kept.
+
+    On a fully successful return (no exception raised) the manifest is
+    truncated: a full restore (``to`` is None) empties the log entirely;
+    a partial restore rewrites the log keeping only entries with
+    ``ts <= to``. Snapshots no longer referenced by any surviving entry
+    are pruned in both cases.
     """
     entries = list(reversed(manifest.iter_entries()))
     if to is not None:
@@ -205,10 +231,95 @@ def restore(manifest: Manifest, *, to: str | None = None) -> int:
             if target.exists():
                 target.unlink()
                 count += 1
+
+    # Truncation: only run after a fully successful restore (no raise above).
+    if to is None:
+        # Full restore: drop the whole log and every snapshot.
+        _truncate_log(manifest, [])
+        _prune_snapshots(manifest, [], snapshots_dir=snapshots_dir)
+    else:
+        # Partial restore: keep entries with ts <= to.
+        kept = [e for e in manifest.iter_entries() if e.ts <= to]
+        _truncate_log(manifest, kept)
+        _prune_snapshots(manifest, kept, snapshots_dir=snapshots_dir)
     return count
 
 
+def _truncate_log(manifest: Manifest, kept: list[ManifestEntry]) -> None:
+    """Rewrite the manifest log to contain exactly ``kept`` (oldest-first).
+
+    An empty ``kept`` list empties the log. Uses the atomic-write helper
+    so a crash mid-rewrite cannot corrupt the log.
+    """
+    from usurface.atomic import atomic_write_bytes
+
+    manifest.path.parent.mkdir(parents=True, exist_ok=True)
+    payload = b"".join(entry.to_json().encode("utf-8") + b"\n" for entry in kept)
+    atomic_write_bytes(manifest.path, payload)
+
+
+def _referenced_snapshots(entries: list[ManifestEntry]) -> set[str]:
+    """Return the set of snapshot paths referenced by ``entries``."""
+    return {
+        e.prev_bytes_path for e in entries if e.prev_bytes_path is not None
+    }
+
+
+def _prune_snapshots(
+    manifest: Manifest,
+    kept: list[ManifestEntry],
+    *,
+    snapshots_dir: Path | None = None,
+) -> list[Path]:
+    """Delete snapshot files under ``manifest_snapshots/`` that are not
+    referenced by any entry in ``kept``.
+
+    Never deletes a referenced snapshot. Returns the list of deleted
+    snapshot paths (for observability/testing). Snapshots deduplicate
+    by SHA (existing behaviour) so a snapshot referenced by two entries
+    survives until neither references it.
+    """
+    sdir = snapshots_dir or paths.state_dir() / "manifest_snapshots"
+    if not sdir.is_dir():
+        return []
+    referenced = _referenced_snapshots(kept)
+    deleted: list[Path] = []
+    for snap in sdir.iterdir():
+        if snap.is_file() and str(snap) not in referenced:
+            try:
+                snap.unlink()
+                deleted.append(snap)
+            except OSError:
+                pass
+    return deleted
+
+
 def truncate(manifest: Manifest) -> None:
-    """Empty the manifest log. Used after a successful verified restore."""
-    if manifest.path.exists():
-        manifest.path.unlink()
+    """Empty the manifest log and prune all snapshots.
+
+    Kept for backwards compatibility; ``restore`` now calls the internal
+    truncation helpers directly, but external callers (and tests) may
+    still use this to reset state.
+    """
+    _truncate_log(manifest, [])
+    _prune_snapshots(manifest, [])
+
+
+def compact(
+    manifest: Manifest, *, snapshots_dir: Path | None = None
+) -> int:
+    """Drop oldest entries beyond ``_RETENTION_ENTRIES`` and prune their
+    now-unreferenced snapshots.
+
+    Returns the number of entries dropped. Called after a successful
+    ``apply`` so the manifest and snapshot dir cannot grow unbounded
+    under the daily systemd timer.
+    """
+    entries = manifest.iter_entries()
+    if len(entries) <= _RETENTION_ENTRIES:
+        return 0
+    kept = entries[-_RETENTION_ENTRIES:]
+    dropped = len(entries) - len(kept)
+    _truncate_log(manifest, kept)
+    _prune_snapshots(manifest, kept, snapshots_dir=snapshots_dir)
+    return dropped

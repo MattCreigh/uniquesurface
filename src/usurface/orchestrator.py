@@ -171,4 +171,15 @@ def apply_to_surfaces(
                     error=msg,
                 )
 
+    # Bound undo history: compact the manifest to the most recent
+    # retention threshold entries and prune orphaned snapshots. Only
+    # runs on a real apply (not dry-run) and only if the pipeline
+    # reached this point without raising.
+    if not dry_run:
+        from usurface.manifest import compact
+
+        dropped = compact(manifest)
+        if dropped:
+            plan.append(f"compacted manifest (dropped {dropped} old entries)")
+
     return plan
