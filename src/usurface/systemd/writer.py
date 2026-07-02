@@ -24,12 +24,17 @@ StandardOutput=journal
 StandardError=journal
 """
 
+# Deterministic daily schedule: noon local time, with a small jitter so a
+# fleet of machines doesn't all hit Bing simultaneously. ``Persistent=true``
+# ensures a missed run (e.g. laptop was asleep/offline) catches up on next
+# boot. Noon was chosen to match the historical apply time and avoid midnight
+# network quirks; a missed noon run is caught up the following boot.
 _TIMER_TEMPLATE = """\
 [Unit]
 Description=uniquesurface — daily POTD refresh
 
 [Timer]
-OnCalendar=daily
+OnCalendar=*-*-* 12:00:00
 RandomizedDelaySec=15min
 Persistent=true
 Unit=usurface-pull.service
@@ -37,6 +42,16 @@ Unit=usurface-pull.service
 [Install]
 WantedBy=timers.target
 """
+
+
+class UsurfaceBinaryNotFound(RuntimeError):
+    """Raised when the ``usurface`` console script cannot be located.
+
+    A scheduled systemd service that points at a non-existent binary
+    fails with status 203/EXEC and silently stops refreshing the
+    wallpaper. We refuse to write such a unit rather than guessing a
+    path that may not exist on the target machine.
+    """
 
 
 def _get_unit_dir() -> Path:
@@ -64,7 +79,18 @@ def install(
     target_dir = unit_dir or _get_unit_dir()
     target_dir.mkdir(parents=True, exist_ok=True)
 
-    bin_path = usurface_bin or shutil.which("usurface") or "/usr/local/bin/usurface"
+    if usurface_bin is not None:
+        bin_path = usurface_bin
+    else:
+        found = shutil.which("usurface")
+        if not found:
+            raise UsurfaceBinaryNotFound(
+                "could not locate the 'usurface' console script on PATH; "
+                "install the package (e.g. `uv tool install .` or "
+                "`pip install --user .`) and re-run `usurface install`, "
+                "or pass an explicit --usurface-bin"
+            )
+        bin_path = found
     cwd = working_dir or os.getcwd()
 
     svc_text = render_service({"usurface_bin": bin_path, "working_dir": cwd})

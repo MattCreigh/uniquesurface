@@ -11,6 +11,7 @@ __all__ = [
     "render_timer",
     "resume",
     "systemctl",
+    "UsurfaceBinaryNotFound",
 ]
 
 from usurface.systemd.writer import (  # noqa: F401
@@ -24,4 +25,5 @@ from usurface.systemd.writer import (  # noqa: F401
     render_timer,
     resume,
     systemctl,
+    UsurfaceBinaryNotFound,
 )

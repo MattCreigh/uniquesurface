@@ -3,10 +3,22 @@
 Writes ``~/.config/kscreenlockerrc`` so ``kscreenlocker_greet`` uses the
 configured image plugin with our wallpaper path.
 
-The greeter's ``org.kde.image`` wallpaper plugin reads its image from a
-nested ``[Greeter][Wallpaper][org.kde.image][General]`` group, not the
-top-level ``[Greeter]`` group. We write both so the wallpaper is
-picked up regardless of which greeter version is installed.
+The kscreenlocker 6.x source defines the relevant config keys in
+``settings/kscreenlockersettings.kcfg``:
+
+  [Greeter]
+  Theme=<theme name>
+  WallpaperPlugin=<plugin id>   # this is the INI key for wallpaperPluginId
+
+The greeter then loads the wallpaper plugin and reads its config from
+``[Greeter][Wallpaper][<WallpaperPlugin>]`` (e.g.
+``[Greeter][Wallpaper][org.kde.image]``). The ``org.kde.image`` plugin
+defines its own ``[General]`` sub-group in ``contents/config/main.xml``,
+so the full key path for the image is
+``[Greeter][Wallpaper][org.kde.image][General] Image=``.
+
+We write all of these so the wallpaper is picked up across greeter
+versions.
 """
 
 from __future__ import annotations
@@ -23,11 +35,17 @@ from usurface.manifest import Manifest
 _log = _kconfig._log
 
 _GROUP = "Greeter"
-_PLUGIN_KEY = "Theme"
+_PLUGIN_KEY = "Theme"  # legacy (unused in Plasma 6)
+_WALLPAPER_KEY = "WallpaperPlugin"  # the INI key for wallpaperPluginId
 _PLUGIN_VALUE = "org.kde.image"
 _IMAGE_KEY = "Image"
 
-# Nested group that org.kde.image actually reads from.
+# Nested group that org.kde.image reads from:
+# [Greeter][Wallpaper][org.kde.image][General]
+# The kscreenlocker greeter (greeterapp.cpp createViewForScreen) reads the
+# wallpaper plugin config from group("Greeter").group("Wallpaper").group(<pluginId>)
+# and the org.kde.image plugin adds its own [General] subgroup holding Image=.
+# This is the canonical, correct path — confirmed against upstream source.
 _NESTED_GROUP = [_GROUP, "Wallpaper", _PLUGIN_VALUE, "General"]
 
 
@@ -44,17 +62,28 @@ class LockBackend:
         prev_sha, prev_snap = snapshot_previous_bytes(manifest, file_path)
 
         try:
-            # Top-level keys (legacy / fallback).
+            # The kcfg maps the C++ property ``wallpaperPluginId`` to the
+            # INI key ``WallpaperPlugin``. kwriteconfig6 writes the
+            # string verbatim, so we write the INI key name explicitly.
+            _kconfig.kwriteconfig(
+                file=file_path,
+                group=_GROUP,
+                key=_WALLPAPER_KEY,
+                value=_PLUGIN_VALUE,
+            )
+            # Legacy Theme= key (unused in Plasma 6 but harmless).
             _kconfig.kwriteconfig(
                 file=file_path,
                 group=_GROUP,
                 key=_PLUGIN_KEY,
-                value=_PLUGIN_VALUE,
+                value="",  # empty: no legacy theme
             )
+            # Top-level Image= (used by some greeter versions).
             _kconfig.kwriteconfig(
                 file=file_path, group=_GROUP, key=_IMAGE_KEY, value=uri
             )
-            # Nested group: the one org.kde.image actually reads.
+            # Nested group: [Greeter][Wallpaper][org.kde.image][General]
+            # This is what the org.kde.image plugin actually reads.
             _kwriteconfig_nested(
                 file=file_path,
                 group_path=_NESTED_GROUP,
@@ -84,7 +113,7 @@ class LockBackend:
         uri = wallpaper.resolve().as_uri()
         nested = "\\".join(_NESTED_GROUP)
         return [
-            f"kwriteconfig6 --file {file_path} --group {_GROUP} --key {_PLUGIN_KEY} {_PLUGIN_VALUE}",
+            f"kwriteconfig6 --file {file_path} --group {_GROUP} --key {_WALLPAPER_KEY} {_PLUGIN_VALUE}",
             f"kwriteconfig6 --file {file_path} --group {_GROUP} --key {_IMAGE_KEY} {uri}",
             f"kwriteconfig6 --file {file_path} --group {nested} --key {_IMAGE_KEY} {uri}",
         ]

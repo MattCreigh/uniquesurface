@@ -7,6 +7,8 @@ from unittest.mock import patch
 
 import subprocess
 
+import pytest
+
 from usurface import systemd
 from usurface.systemd import writer
 
@@ -30,7 +32,7 @@ def test_render_service_contains_usurface_bin() -> None:
 
 def test_render_timer_has_daily_schedule() -> None:
     text = systemd.render_timer()
-    assert "OnCalendar=daily" in text
+    assert "OnCalendar=*-*-* 12:00:00" in text
     assert "Persistent=true" in text
 
 
@@ -42,7 +44,17 @@ def test_install_writes_units(tmp_path: Path) -> None:
     assert svc.exists()
     assert tmr.exists()
     assert "/bin/true" in svc.read_text()
-    assert "OnCalendar=daily" in tmr.read_text()
+    assert "OnCalendar=*-*-* 12:00:00" in tmr.read_text()
+
+
+def test_install_raises_when_binary_missing(tmp_path: Path, monkeypatch) -> None:
+    """A scheduled service must never point at a non-existent binary,
+    which would fail with status 203/EXEC and silently stop refreshing."""
+    import usurface.systemd.writer as w
+
+    monkeypatch.setattr(w.shutil, "which", lambda _name: None)
+    with pytest.raises(w.UsurfaceBinaryNotFound):
+        systemd.install(unit_dir=tmp_path / "units")
 
 
 def test_pause_uses_runtime_mask() -> None:

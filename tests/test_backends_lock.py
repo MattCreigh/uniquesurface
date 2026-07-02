@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-
 import pytest
 
 from usurface.backends.lock import LockBackend
@@ -45,18 +44,27 @@ def fake_kwriteconfig(monkeypatch: pytest.MonkeyPatch):
     return calls
 
 
-def test_lock_writes_both_top_level_and_nested(
+def test_lock_writes_wallpaper_plugin_key(
     fake_kwriteconfig: list[list[str]],
 ) -> None:
+    """The kscreenlocker kcfg maps wallpaperPluginId to the INI key
+    ``WallpaperPlugin``. The backend must write this key."""
     backend = LockBackend()
     manifest = Manifest()
     backend.apply(manifest, Path("/tmp/wall.jpg"))
     groups = [" ".join(c) for c in fake_kwriteconfig]
-    # Top-level Theme=org.kde.image
-    assert any("Greeter" in g and "Theme" in g and "org.kde.image" in g for g in groups)
-    # Top-level Image=
-    assert any("Greeter" in g and " Image" in g for g in groups)
-    # Nested [Greeter][Wallpaper][org.kde.image][General] Image=
+    assert any("WallpaperPlugin" in g and "org.kde.image" in g for g in groups)
+
+
+def test_lock_writes_nested_image_key(
+    fake_kwriteconfig: list[list[str]],
+) -> None:
+    """The org.kde.image plugin reads Image from
+    [Greeter][Wallpaper][org.kde.image][General]."""
+    backend = LockBackend()
+    manifest = Manifest()
+    backend.apply(manifest, Path("/tmp/wall.jpg"))
+    groups = [" ".join(c) for c in fake_kwriteconfig]
     assert any(
         "Greeter" in g
         and "Wallpaper" in g
@@ -70,7 +78,5 @@ def test_lock_writes_both_top_level_and_nested(
 def test_lock_dry_run_plan_includes_nested() -> None:
     backend = LockBackend()
     plan = backend.dry_run_plan(Path("/tmp/wall.jpg"))
-    assert any(
-        "Greeter" in line and "Wallpaper" in line and "org.kde.image" in line
-        for line in plan
-    )
+    assert any("WallpaperPlugin" in line for line in plan)
+    assert any("Wallpaper" in line and "General" in line for line in plan)

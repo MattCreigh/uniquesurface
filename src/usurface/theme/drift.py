@@ -43,8 +43,30 @@ class DriftReport:
 
 
 def strip_sentinels(text: str) -> str:
-    """Remove the sentinel region from a QML file, returning the rest."""
-    return _SENTINEL_RE.sub("", text)
+    """Remove the sentinel region from a QML file, returning the rest.
+
+    Also normalises the four font/theme property *values* that usurface
+    manages (``fontFamily``, ``fontWeight``, ``passwordCharacter``,
+    ``clockFormat``) to a canonical placeholder. This means drift
+    detection compares the *structure* of the file, not the particular
+    string values usurface intentionally rewrote — so our own managed
+    edits are not mistaken for upstream drift.
+    """
+    stripped = _SENTINEL_RE.sub("", text)
+    # Normalise the value literals of the properties we manage so that
+    # our intentional edits don't register as drift. Only the
+    # ``property string <name>: "<value>"`` declaration lines are
+    # touched; everything else (structure, other properties) is compared
+    # verbatim.
+    for prop in ("fontFamily", "fontWeight", "passwordCharacter", "clockFormat"):
+        stripped = re.sub(
+            r'((?:readonly\s+)?property\s+string\s+'
+            + re.escape(prop)
+            + r'\s*:\s*)"[^"]*"',
+            r'\1"@usurface@managed@"',
+            stripped,
+        )
+    return stripped
 
 
 def on_disk_stripped_hash(vendor_path: Path) -> str | None:
@@ -63,13 +85,25 @@ def check(
     """Check whether ``vendor_path`` matches its stored pristine template.
 
     The comparison hashes the on-disk file with the sentinel region
-    stripped against the stored pristine hash (also stripped). The
-    function does NOT attempt to re-extract the pristine; that is the
-    orchestrator's responsibility (``usurface qml-update-templates``).
+    stripped (and managed property values normalised) against the stored
+    pristine *also* normalised the same way. This means our own
+    intentional property-value edits don't register as drift; only
+    structural changes outside the four managed properties do.
     """
-    pristine_sha = extract.pristine_sha256(name)
-    on_disk_sha = on_disk_stripped_hash(vendor_path)
-    matches = pristine_sha is not None and pristine_sha == on_disk_sha
+    pristine_bytes = extract.read_pristine(name)
+    if pristine_bytes is None:
+        pristine_sha = None
+        on_disk_sha = on_disk_stripped_hash(vendor_path)
+        matches = False
+    else:
+        pristine_text = pristine_bytes.decode("utf-8", errors="replace")
+        # Pristine has no sentinels; strip_sentinels still normalises the
+        # managed property values so both sides are compared on the same
+        # structural basis.
+        pristine_norm = strip_sentinels(pristine_text)
+        pristine_sha = sha256_bytes(pristine_norm.encode("utf-8"))
+        on_disk_sha = on_disk_stripped_hash(vendor_path)
+        matches = pristine_sha == on_disk_sha
     return DriftReport(
         name=name,
         vendor_path=vendor_path,
