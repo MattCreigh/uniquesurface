@@ -144,11 +144,15 @@ def apply(dry_run: bool, config_path: Path | None, adopt_drift: bool) -> None:
     )
     for line in plan:
         click.echo(line)
-    if not dry_run:
-        click.echo(
-            "To see the new wallpaper on the SDDM login screen, "
-            "log out (SDDM caches theme files at startup)."
-        )
+    # The orchestrator already emits a precise "restart <dm>" or
+    # "log out fully" hint when the login surface was actually updated,
+    # so we only add a generic note when nothing login-related was said.
+    if not dry_run and not any("login wallpaper updated" in line for line in plan):
+        if not any("login" in line.lower() for line in plan):
+            click.echo(
+                "To see the new wallpaper on the SDDM login screen, "
+                "log out fully (not switch-user)."
+            )
 
 
 # --- restore -----------------------------------------------------------
