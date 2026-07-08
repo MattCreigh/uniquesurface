@@ -29,6 +29,27 @@ def _get_user_home() -> Path | None:
     return None
 
 
+def invoking_user_uid_gid() -> tuple[int, int] | None:
+    """Return (uid, gid) of the user who invoked a sudo session.
+
+    Returns ``None`` if the process is not running as root or if the
+    original user cannot be resolved. This lets code that writes to a
+    shared system directory (e.g. ``/usr/local/share/wallpapers``) restore
+    ownership to the invoking user so a daily user-mode service can still
+    overwrite the file later.
+    """
+    sudo_user = os.environ.get("SUDO_USER")
+    if not sudo_user or os.geteuid() != 0:
+        return None
+    import pwd
+
+    try:
+        pw = pwd.getpwnam(sudo_user)
+        return pw.pw_uid, pw.pw_gid
+    except KeyError:
+        return None
+
+
 def config_dir() -> Path:
     """Return ``~/.config/usurface`` (XDG_CONFIG_HOME aware)."""
     sudo_home = _get_user_home()

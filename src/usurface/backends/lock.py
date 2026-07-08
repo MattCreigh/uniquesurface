@@ -122,11 +122,11 @@ class LockBackend:
     def dry_run_plan(self, wallpaper: Path) -> list[str]:
         file_path = _paths.config_dir().parent / "kscreenlockerrc"
         uri = wallpaper.resolve().as_uri()
-        nested = "\\".join(_NESTED_GROUP)
+        nested_args = " ".join(f"--group {g}" for g in _NESTED_GROUP)
         return [
             f"kwriteconfig6 --file {file_path} --group {_GROUP} --key {_WALLPAPER_KEY} {_PLUGIN_VALUE}",
             f"kwriteconfig6 --file {file_path} --group {_GROUP} --key {_IMAGE_KEY} {uri}",
-            f"kwriteconfig6 --file {file_path} --group {nested} --key {_IMAGE_KEY} {uri}",
+            f"kwriteconfig6 --file {file_path} {nested_args} --key {_IMAGE_KEY} {uri}",
             "qdbus6 org.freedesktop.ScreenSaver /org/freedesktop/ScreenSaver org.kde.screensaver.configure",
         ]
 

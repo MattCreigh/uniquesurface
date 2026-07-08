@@ -115,8 +115,16 @@ class Manifest:
             prev_bytes_path=prev_bytes_path,
         )
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self.path.open("a", encoding="utf-8") as f:
-            f.write(entry.to_json() + "\n")
+
+        # Append atomically so a permission problem or crash mid-write never
+        # corrupts the log. This also gives a clearer error than a raw
+        # OSError when the log is owned by another user (e.g. after a sudo
+        # run left it root-owned).
+        from usurface.atomic import atomic_write_bytes
+
+        current = b"".join(e.to_json().encode("utf-8") + b"\n" for e in self.iter_entries())
+        current += entry.to_json().encode("utf-8") + b"\n"
+        atomic_write_bytes(self.path, current, mode=0o644)
         return entry
 
     def iter_entries(self) -> list[ManifestEntry]:

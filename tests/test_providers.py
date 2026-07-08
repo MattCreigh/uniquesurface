@@ -16,7 +16,7 @@ from usurface.providers import (
     make_plugin_manager,
 )
 from usurface.providers.builtin import bing, file, solid
-from usurface.schema import Source
+from usurface.schema import Source, SourceOptions
 
 
 # --- registry ---------------------------------------------------------
@@ -121,7 +121,7 @@ def test_fetch_from_source_dispatches_correctly() -> None:
     pm = make_plugin_manager()
     source = Source(
         provider="solid",
-        options={"color": "#abcdef", "width": 32, "height": 18},
+        options=SourceOptions.model_validate({"color": "#abcdef", "width": 32, "height": 18}),
     )
     img = fetch_from_source(pm, source)
     assert img.content_type == "image/jpeg"

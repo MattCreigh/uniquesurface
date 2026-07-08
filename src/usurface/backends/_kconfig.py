@@ -10,6 +10,7 @@ preview what would be written without touching the system.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -133,6 +134,30 @@ def kreadconfig(
     return value or None
 
 
+def _run_as_invoking_user(argv: list[str]) -> list[str]:
+    """If running as root via sudo, drop to the invoking user.
+
+    Live D-Bus calls must target the *original* user's session bus,
+    otherwise Plasma services on ``/run/user/<uid>`` are not visible.
+    We preserve ``XDG_RUNTIME_DIR`` and ``DBUS_SESSION_BUS_ADDRESS`` so
+    the call reaches the user's PlasmaShell / ScreenSaver services.
+    """
+    sudo_user = os.environ.get("SUDO_USER")
+    sudo_uid = os.environ.get("SUDO_UID")
+    if os.geteuid() == 0 and sudo_user and sudo_uid:
+        runtime = f"/run/user/{sudo_uid}"
+        return [
+            "sudo",
+            "-u",
+            sudo_user,
+            "env",
+            f"XDG_RUNTIME_DIR={runtime}",
+            f"DBUS_SESSION_BUS_ADDRESS=unix:path={runtime}/bus",
+            *argv,
+        ]
+    return argv
+
+
 def qdbus_call(
     *,
     service: str,
@@ -150,7 +175,9 @@ def qdbus_call(
     files are updated, and Plasma will pick the wallpaper up on next
     start. We log at debug level so the user doesn't see noise.
     """
-    argv: list[str] = [ensure_tool("qdbus6"), service, path, method, *args]
+    argv: list[str] = _run_as_invoking_user(
+        [ensure_tool("qdbus6"), service, path, method, *args]
+    )
     if dry_run:
         return argv
     _log.info("qdbus_call", argv=argv)
@@ -219,13 +246,15 @@ def evaluate_wallpaper_script(
         f"d.writeConfig('Image','{js_image}');"
         "}"
     )
-    argv: list[str] = [
-        ensure_tool("qdbus6"),
-        _PLASMASHELL_SERVICE,
-        _PLASMASHELL_PATH,
-        f"{_PLASMASHELL_IFACE}.evaluateScript",
-        script,
-    ]
+    argv: list[str] = _run_as_invoking_user(
+        [
+            ensure_tool("qdbus6"),
+            _PLASMASHELL_SERVICE,
+            _PLASMASHELL_PATH,
+            f"{_PLASMASHELL_IFACE}.evaluateScript",
+            script,
+        ]
+    )
     if dry_run:
         return argv
     _log.info("evaluate_wallpaper_script", argv=argv)
@@ -255,12 +284,14 @@ def reload_lockscreen_config(*, dry_run: bool = False) -> list[str]:
     wallpaper plugin so the *next* lock uses the new image, without
     needing to lock+unlock. Best-effort: a no-op if the service is absent.
     """
-    argv: list[str] = [
-        ensure_tool("qdbus6"),
-        "org.freedesktop.ScreenSaver",
-        "/org/freedesktop/ScreenSaver",
-        "org.kde.screensaver.configure",
-    ]
+    argv: list[str] = _run_as_invoking_user(
+        [
+            ensure_tool("qdbus6"),
+            "org.freedesktop.ScreenSaver",
+            "/org/freedesktop/ScreenSaver",
+            "org.kde.screensaver.configure",
+        ]
+    )
     if dry_run:
         return argv
     _log.info("reload_lockscreen_config", argv=argv)

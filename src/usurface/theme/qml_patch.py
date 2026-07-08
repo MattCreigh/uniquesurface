@@ -252,8 +252,10 @@ def remove_sentinels(*, name: str, vendor_path: Path, manifest: Manifest) -> str
 
 # The fadeoutTimer in LockScreenUi.qml controls how long the lock screen
 # stays visible before dimming. Its interval is a literal in milliseconds.
+# The regex tolerates other properties between ``id: fadeoutTimer`` and
+# ``interval:`` so it works with the real vendor file layout.
 _FADEOUT_TIMER_INTERVAL_RE = re.compile(
-    r"(Timer\s*\{\s*id:\s*fadeoutTimer\s*\n\s*interval:\s*)\d+",
+    r"(Timer\s*\{\s*id:\s*fadeoutTimer\b[^}]*?interval:\s*)\d+",
     re.DOTALL,
 )
 

@@ -17,8 +17,33 @@ from usurface.schema import Config
 
 
 def _expand(path: str) -> str:
-    """Expand ``~`` and env vars in a path string."""
+    """Expand ``~`` and env vars in a path string.
+
+    When running via sudo, ``~`` must expand to the *invoking* user's
+    home directory, not ``/root``. We detect that case and substitute the
+    original user's home before the normal expansion.
+    """
+    sudo_home = _sudo_user_home()
+    if sudo_home is not None and path.startswith("~"):
+        # ``os.path.expanduser`` only looks at $HOME; for sudo it points at
+        # /root. Replace a leading ``~`` with the real user's home.
+        rest = path[1:]
+        if rest.startswith("/") or rest == "":
+            path = str(sudo_home) + rest
     return os.path.expandvars(os.path.expanduser(path))
+
+
+def _sudo_user_home() -> Path | None:
+    """Return the invoking user's home when running as root via sudo."""
+    sudo_user = os.environ.get("SUDO_USER")
+    if sudo_user and os.geteuid() == 0:
+        import pwd
+
+        try:
+            return Path(pwd.getpwnam(sudo_user).pw_dir)
+        except KeyError:
+            pass
+    return None
 
 
 def load_config(path: Path | None = None) -> Config:

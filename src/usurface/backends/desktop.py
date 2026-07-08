@@ -179,9 +179,10 @@ class DesktopBackend:
             f"kwriteconfig6 --file {file_path} --group Containments --key {_DESKTOP_KEY} {uri}",
         ]
         for cid in ids:
-            group = "][".join(["Containments", str(cid), *_WALLPAPER_SUBGROUPS])
+            group_path = ["Containments", str(cid), *_WALLPAPER_SUBGROUPS]
+            group_args = " ".join(f"--group {g}" for g in group_path)
             plan.append(
-                f"kwriteconfig6 --file {file_path} --group {group} --key {_DESKTOP_KEY} {uri}"
+                f"kwriteconfig6 --file {file_path} {group_args} --key {_DESKTOP_KEY} {uri}"
             )
         plan.append(
             f"qdbus6 org.kde.plasmashell /PlasmaShell evaluateScript <set Image={uri} on all desktops>"

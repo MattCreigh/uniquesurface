@@ -242,6 +242,51 @@ The one thing that would make me hesitate to call it "release-ready" as advertis
 
 Directly answering the key question: the codebase and its aims are coherent and the implementation is solid and trustworthy **where it exists** — but one marquee capability is currently documentation-only, and that gap should be closed or the marketing corrected before public release. Fix that, refresh the stale docs, and this is a tool I'd recommend to a KDE power user without apology.
 
+## 9. Appendix A.4 — Remediation Audit (performed 2026-07-08)
+
+### 9.1 Trigger
+User report: desktop background remained the default KDE Neon image instead of the configured Bing Picture of the Day; the SDDM login screen showed the previous day's image, while the new image "flashed up after password correct". This pointed to a failure in the live desktop-wallpaper apply path and/or stale installed binary.
+
+### 9.2 Root-cause findings
+1. **Installed `uv tool` binary was stale.** The source tree contained the new `evaluateScript` / nested-containment code, but `/home/matt/.local/bin/usurface` (the binary the systemd user timer and the shell run) was an older `uv tool` install that still called the non-existent `org.kde.plasma.desktop /PlasmaShell refreshWallpaper` and did not write nested `[Containments][<id>][Wallpaper][org.kde.image][General] Image=` groups. This matches the known lesson in user memory about frozen `uv tool` copies vs. editable venvs.
+2. **State files were root-owned from earlier `sudo` runs.** `/home/matt/.local/state/usurface/manifest.jsonl` and `/usr/local/share/wallpapers/last_wallpaper.jpg` were owned by `root`, causing the user-mode `usurface apply` to crash with `Permission denied` before completing.
+3. **`sudo usurface apply` used `/root/.local/state/usurface/` instead of the invoking user's state dir.** `os.path.expanduser('~')` in `config.expand_behaviour_paths` expanded to `/root` under `sudo`, so a separate root-only manifest and canonical wallpaper were created.
+4. **Live D-Bus calls from `sudo` targeted the root session bus, missing the user's Plasma services.** `qdbus6` therefore failed to find `org.kde.plasmashell` / `org.freedesktop.ScreenSaver`, so even after the nested config writes the wallpaper was not refreshed live.
+5. **Dry-run plan printed syntactically invalid `--group Containments][1]...` arguments.** The actual `kwriteconfig6` invocation was correct, but the human-readable plan was misleading.
+6. **Image extension was taken from the provider's suggestion, not the re-encoded bytes.** `verify_image` re-encodes to JPEG (or PNG for transparency), but `orchestrator.py` still named the file `last_wallpaper.webp` if the source was WebP, producing a mismatched file.
+
+### 9.3 Remediation implemented
+All changes were committed in `932212b`:
+- `src/usurface/manifest.py`: `Manifest.append` now atomically rewrites the whole JSONL log via `atomic_write_bytes`, surviving root-owned files and giving a clear permission error on the real path.
+- `src/usurface/backends/_kconfig.py`: added `_run_as_invoking_user()` helper that drops `qdbus6` calls to the `SUDO_USER` with the correct `XDG_RUNTIME_DIR` + `DBUS_SESSION_BUS_ADDRESS`, so live updates work from `sudo`.
+- `src/usurface/backends/desktop.py`, `lock.py`: fixed `dry_run_plan` output to show the real repeated `--group` arguments.
+- `src/usurface/orchestrator.py`:
+  - Pre-flight check that `shared_dir` is writable, with an actionable hint.
+  - Derives the output extension from the re-encoded bytes (JPEG/PNG), not the provider suggestion.
+  - Restores ownership of the shared wallpaper file (and its parent directory) to the invoking user after a `sudo` write.
+- `src/usurface/config.py`: `expand_behaviour_paths` now expands `~` to the invoking user's home when running under `sudo`, not `/root`.
+- `src/usurface/paths.py`: added `invoking_user_uid_gid()` helper used by the orchestrator ownership restoration.
+- `src/usurface/theme/qml_patch.py`: made the `fadeoutTimer` interval matcher tolerant of other properties between `id: fadeoutTimer` and `interval:`.
+- `tests/test_providers.py`: fixed a type-error in `Source(options=...)` that `mypy` flagged.
+- `CHANGELOG.md`: documented the A.4 fixes.
+
+### 9.4 Operational steps executed
+- Fixed ownership: `chown -R matt:matt /home/matt/.local/state/usurface /usr/local/share/wallpapers`.
+- Re-installed the tool: `uv tool install . --force`.
+- Ran `sudo /home/matt/.local/bin/usurface apply` once to update the SDDM login `theme.conf`; the new D-Bus drop-to-user logic allowed the live desktop and lock reload to succeed, and ownership was restored to `matt:matt` on the shared wallpaper file.
+
+### 9.5 Verification
+- `uv run pytest -q` → **109 passed**.
+- `uv run ruff check src tests` → **All checks passed**.
+- `uv run mypy src tests --ignore-missing-imports` → **Success: no issues found**.
+- `usurface apply --dry-run` now prints correct nested `--group` arguments.
+- `~/.config/plasma-org.kde.plasma.desktop-appletsrc` shows `[Containments][1][Wallpaper][org.kde.image][General] Image=file:///usr/local/share/wallpapers/last_wallpaper.jpg` and `[Containments][2][Wallpaper][org.kde.image][General] Image=...` correctly.
+
+### 9.6 Residual recommendations
+- Mark the old `CODEBASE_ASSESSMENT.md` as historical or refresh it; it contains stale version/test/dependency claims.
+- Update the README test badge from `86 passed` to `109 passed` (or generate it in CI).
+- Decide whether to wire third-party provider entry-point loading or update `providers/README.md` to say the feature is not yet available.
+
 ## 8. Template Self-Audit & Feedback
 
 **What worked well:**

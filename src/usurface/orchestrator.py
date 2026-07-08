@@ -6,6 +6,7 @@ service.
 
 from __future__ import annotations
 
+import os
 from io import BytesIO
 from pathlib import Path
 
@@ -18,6 +19,7 @@ from usurface.backends.login import LoginBackend
 from usurface.config import Config, expand_behaviour_paths
 from usurface.logging import get_logger
 from usurface.manifest import Manifest, write_tracked
+from usurface.paths import invoking_user_uid_gid
 from usurface.providers import (
     FetchedImage,
     ProviderError,
@@ -36,6 +38,22 @@ def default_backends(*, accent_color: str | None = None) -> list[Backend]:
     ``color=`` key.
     """
     return [DesktopBackend(), LockBackend(), LoginBackend(accent_color=accent_color)]
+
+
+def _restore_shared_owner(path: Path) -> None:
+    """If running via sudo, chown ``path`` back to the invoking user.
+
+    The shared wallpaper file must stay writable by the user-mode systemd
+    timer even after a one-off ``sudo usurface apply`` run.
+    """
+    uid_gid = invoking_user_uid_gid()
+    if uid_gid is None:
+        return
+    uid, gid = uid_gid
+    try:
+        os.chown(path, uid, gid)
+    except OSError:
+        _log.debug("shared_owner_restore_failed", path=str(path))
 
 
 def verify_image(data: bytes) -> bytes:
@@ -96,9 +114,27 @@ def apply_to_surfaces(
     user_dir.mkdir(parents=True, exist_ok=True)
     shared_dir.mkdir(parents=True, exist_ok=True)
 
+    # Pre-flight: if the shared directory is not writable, the shared
+    # wallpaper copy will fail after we have already downloaded the
+    # image. Surface the problem early with a clear, actionable error.
+    if not os.access(shared_dir, os.W_OK):
+        raise BackendError(
+            f"shared wallpaper directory {shared_dir} is not writable",
+            hint=(
+                "the directory must be writable by the user running usurface. "
+                "If you previously ran with sudo, fix ownership with:\n"
+                f"  sudo chown -R $USER:$USER {shared_dir}\n"
+                "Or change surface.behaviour.shared_dir to a user-writable path."
+            ),
+        )
+
     fetched = fetch_wallpaper(expanded)
     clean_bytes = verify_image(fetched.data)
-    ext = fetched.suggested_extension or ".jpg"
+    # verify_image re-encodes to JPEG (or PNG for transparent input), so the
+    # output extension must match the actual bytes, not the provider's
+    # original suggestion (e.g. a WebP source would otherwise get a .webp
+    # filename containing JPEG data).
+    ext = ".png" if clean_bytes.startswith(b"\x89PNG\r\n\x1a\n") else ".jpg"
 
     canonical = user_dir / f"last_wallpaper{ext}"
     shared = shared_dir / f"last_wallpaper{ext}"
@@ -118,6 +154,12 @@ def apply_to_surfaces(
         plan.append(f"wrote {canonical} ({len(clean_bytes)} bytes)")
         write_tracked(manifest, shared, clean_bytes, mode=0o644)
         plan.append(f"wrote {shared} (mode 0644)")
+        # If we are running via sudo, the atomic replace created the shared
+        # file as root. Restore ownership to the invoking user so the daily
+        # user-mode systemd timer can overwrite it tomorrow.
+        _restore_shared_owner(shared)
+        _restore_shared_owner(shared_dir)
+
 
     for backend in backends or default_backends(
         accent_color=expanded.surface.login.accent_color

@@ -65,6 +65,23 @@ adheres to [Semantic Versioning](https://semver.org/).
 - `usurface status` and `usurface doctor` now report any QML drift with
   the exact remediation commands.
 
+### Fixed (Appendix A.4)
+
+- `usurface apply` now survives a manifest or shared directory owned by
+  another user (e.g. after a previous `sudo` run) without crashing.
+- Dry-run plan output now shows the real `kwriteconfig6 --group`
+  argument sequence for nested INI groups.
+- Shared wallpaper ownership is restored to the invoking user after a
+  `sudo usurface apply`, so the daily user-mode timer stays writable.
+- D-Bus live-update calls (`evaluateScript`, screen-saver reload) are
+  routed through the invoking user's session bus when run via `sudo`.
+- `~` in `surface.behaviour.user_dir`/`shared_dir` expands to the
+  invoking user's home under `sudo`, not `/root`.
+- Image extension is derived from the re-encoded bytes (JPEG/PNG), not
+  the provider's original suggestion.
+- The fadeoutTimer interval matcher tolerates other properties between
+  `id: fadeoutTimer` and `interval:`.
+
 ### Known limitations
 
 - Template versioning per Plasma minor release is deferred to v2.
