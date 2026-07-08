@@ -50,7 +50,7 @@ def _appletsrc_path() -> Path:
 
 
 def _discover_desktop_containments(appletsrc: Path) -> list[int]:
-    """Return the numeric ids of every desktop containment in ``appletsrc``.
+    """Return the numeric ids of every containment that declares a wallpaperplugin.
 
     A containment is a top-level ``[Containments][<id>]`` group whose
     ``wallpaperplugin=`` key is set. Panels and other non-desktop
@@ -103,27 +103,12 @@ class DesktopBackend:
         prev_sha, prev_snap = snapshot_previous_bytes(manifest, file_path)
 
         # Write the wallpaper into the *real* containment group(s).
-        # Plasma ignores the flat ``[Containments]`` group for wallpaper,
-        # so we discover each desktop containment id and write the nested
-        # ``[Containments][<id>][Wallpaper][org.kde.image][General]``
-        # Image= key for each. We also write the flat group as a fallback
-        # so a fresh install (no appletsrc) still has a discoverable
-        # wallpaperplugin/Image pair.
+        # Plasma ignores the flat ``[Containments]`` group for wallpaper, and
+        # writing it can trigger a config-file reload that briefly resets the
+        # desktop to the default image, so we NEVER write the flat group — only
+        # the nested ``[Containments][<id>][Wallpaper][org.kde.image][General]``
+        # Image= key for each discovered desktop containment.
         try:
-            _kconfig.kwriteconfig(
-                file=file_path,
-                group="Containments",
-                key=_PLUGIN_KEY,
-                value=_DEFAULT_PLUGIN,
-            )
-            _kconfig.kwriteconfig(
-                file=file_path,
-                group="Containments",
-                key=_DESKTOP_KEY,
-                value=uri,
-            )
-            # Re-read the file we just wrote so the containment discovery
-            # sees the wallpaperplugin key we just added.
             containment_ids = _discover_desktop_containments(file_path)
             for cid in containment_ids:
                 group_path = [
@@ -174,10 +159,7 @@ class DesktopBackend:
         file_path = _appletsrc_path()
         uri = wallpaper.resolve().as_uri()
         ids = _discover_desktop_containments(file_path)
-        plan = [
-            f"kwriteconfig6 --file {file_path} --group Containments --key {_PLUGIN_KEY} {_DEFAULT_PLUGIN}",
-            f"kwriteconfig6 --file {file_path} --group Containments --key {_DESKTOP_KEY} {uri}",
-        ]
+        plan: list[str] = []
         for cid in ids:
             group_path = ["Containments", str(cid), *_WALLPAPER_SUBGROUPS]
             group_args = " ".join(f"--group {g}" for g in group_path)

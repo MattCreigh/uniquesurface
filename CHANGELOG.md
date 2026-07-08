@@ -67,12 +67,20 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed (Appendix A.4)
 
+- The desktop backend no longer writes the flat ``[Containments]``
+  group, which Plasma ignores for wallpaper and whose write can trigger
+  a config-file reload that resets the desktop to the default image.
+  Only the real nested ``[Containments][<id>][Wallpaper][org.kde.image]
+  [General] Image=`` groups are written, plus the live
+  ``evaluateScript`` apply.
 - `usurface apply` now survives a manifest or shared directory owned by
   another user (e.g. after a previous `sudo` run) without crashing.
 - Dry-run plan output now shows the real `kwriteconfig6 --group`
   argument sequence for nested INI groups.
 - Shared wallpaper ownership is restored to the invoking user after a
   `sudo usurface apply`, so the daily user-mode timer stays writable.
+- Manifest log and snapshots directory ownership are likewise restored
+  to the invoking user after a `sudo usurface apply`.
 - D-Bus live-update calls (`evaluateScript`, screen-saver reload) are
   routed through the invoking user's session bus when run via `sudo`.
 - `~` in `surface.behaviour.user_dir`/`shared_dir` expands to the

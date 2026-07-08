@@ -116,13 +116,32 @@ class Manifest:
         )
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Append atomically so a permission problem or crash mid-write never
-        # corrupts the log. This also gives a clearer error than a raw
-        # OSError when the log is owned by another user (e.g. after a sudo
-        # run left it root-owned).
+        # Append atomically so a crash mid-write never corrupts the log.
+        # We read the current entries, append the new one, and rewrite the
+        # whole file via atomic_write_bytes. If the existing file is not
+        # readable (e.g. root-owned from a prior sudo run), fall back to a
+        # plain append so the apply can still proceed; the ownership fix
+        # in the orchestrator prevents this from recurring.
         from usurface.atomic import atomic_write_bytes
 
-        current = b"".join(e.to_json().encode("utf-8") + b"\n" for e in self.iter_entries())
+        try:
+            current = b"".join(
+                e.to_json().encode("utf-8") + b"\n" for e in self.iter_entries()
+            )
+        except PermissionError:
+            # File exists but is not readable (likely root-owned). A plain
+            # append only needs write access; if even that fails, surface a
+            # clear, actionable error.
+            try:
+                with self.path.open("a", encoding="utf-8") as f:
+                    f.write(entry.to_json() + "\n")
+                return entry
+            except PermissionError as exc:
+                raise PermissionError(
+                    f"Cannot write manifest {self.path}: permission denied. "
+                    "If you previously ran usurface with sudo, fix ownership with:\n"
+                    f"  sudo chown -R $USER:$USER {self.path.parent}"
+                ) from exc
         current += entry.to_json().encode("utf-8") + b"\n"
         atomic_write_bytes(self.path, current, mode=0o644)
         return entry

@@ -80,13 +80,13 @@ def test_desktop_apply_writes_expected_keys(
     manifest = Manifest(tmp_path / "manifest.jsonl")
     backend.apply(manifest, target_image)
 
-    # At minimum the flat [Containments] group writes (plugin + image).
-    assert len(fake_kwriteconfig) >= 2
-    plugin_argv = next(c for c in fake_kwriteconfig if "wallpaperplugin" in c)
-    image_argv = next(c for c in fake_kwriteconfig if c[-2] == "Image")
-    assert "org.kde.image" in plugin_argv
-    # Image arg uses a file:// URI.
-    assert any(arg.startswith("file://") for arg in image_argv)
+    # No flat [Containments] group is written — Plasma ignores it for
+    # wallpaper and writing it can trigger a config reload that resets
+    # the desktop to the default image. Only nested containment writes
+    # happen (none here because the appletsrc doesn't exist in the test
+    # tmp XDG dir), plus the live evaluateScript D-Bus call.
+    flat_calls = [c for c in fake_kwriteconfig if c[3:5] == ["--group", "Containments"] and len(c) <= 7]
+    assert flat_calls == []
 
     # The live apply uses the PlasmaShell evaluateScript D-Bus method on
     # the *real* Plasma 6 service (org.kde.plasmashell), not the legacy
@@ -113,8 +113,8 @@ def test_desktop_dry_run_plan(
     target_image = tmp_path / "wp.jpg"
     target_image.write_bytes(b"\xff\xd8\xff" + b"data")
     plan = DesktopBackend().dry_run_plan(target_image)
-    assert any("wallpaperplugin" in line for line in plan)
-    assert any("Image" in line for line in plan)
+    # No flat [Containments] group in the plan — only nested + live apply.
+    assert not any(line.startswith("kwriteconfig6 --file") and "--group Containments --key" in line and "Wallpaper" not in line for line in plan)
     # The live apply must use the evaluateScript D-Bus method on the real
     # Plasma 6 service. The old refreshWallpaper call does not exist.
     assert any("evaluateScript" in line for line in plan)

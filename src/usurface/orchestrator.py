@@ -307,4 +307,12 @@ def apply_to_surfaces(
         if dropped:
             plan.append(f"compacted manifest (dropped {dropped} old entries)")
 
+        # If we are running via sudo, every backend/QML write recorded into
+        # the manifest created root-owned entries and snapshots. Restore
+        # ownership of the manifest log and the snapshots/state directory
+        # to the invoking user *after* all writes + compaction are done,
+        # so the daily user-mode systemd timer can keep appending.
+        _restore_shared_owner(manifest.path)
+        _restore_shared_owner(manifest.path.parent)
+
     return plan
