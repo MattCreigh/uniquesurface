@@ -134,6 +134,17 @@ def test_apply_real_writes_files(
         )
     )
 
+    # Mock the D-Bus live-apply calls so the test never talks to the real
+    # running Plasma shell (which would persist a tmp wallpaper path into
+    # the user's real appletsrc).
+    from usurface.backends import _kconfig
+
+    monkeypatch.setattr(
+        _kconfig, "evaluate_wallpaper_script", lambda **kw: []
+    )
+    monkeypatch.setattr(_kconfig, "reload_lockscreen_config", lambda **kw: [])
+    monkeypatch.setattr(_kconfig, "qdbus_call", lambda **kw: [])
+
     cfg_dir = tmp_path / "xdg_config" / "usurface"
     cfg_dir.mkdir(parents=True)
     (cfg_dir / "config.toml").write_text(

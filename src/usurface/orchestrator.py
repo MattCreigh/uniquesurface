@@ -161,7 +161,7 @@ def apply_to_surfaces(
         _restore_shared_owner(shared_dir)
 
 
-    for backend in backends or default_backends(
+    for backend in backends if backends is not None else default_backends(
         accent_color=expanded.surface.login.accent_color
     ):
         if dry_run:

@@ -89,6 +89,14 @@ adheres to [Semantic Versioning](https://semver.org/).
   the provider's original suggestion.
 - The fadeoutTimer interval matcher tolerates other properties between
   `id: fadeoutTimer` and `interval:`.
+- **Test isolation:** `apply_to_surfaces(backends=[])` now truly skips
+  all backends (previously the falsy empty list fell through to
+  `default_backends()`, causing integration tests to invoke the real
+  `kwriteconfig6` / `qdbus6` against the live Plasma session and
+  pollute the user's real `appletsrc` with tmp wallpaper paths — the
+  real root cause of the desktop reverting to the KDE Neon default
+  after running the test suite). The CLI integration test now mocks the
+  D-Bus live-apply calls so it never talks to the running shell.
 
 ### Known limitations
 
