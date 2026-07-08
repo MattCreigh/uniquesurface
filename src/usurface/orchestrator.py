@@ -56,6 +56,42 @@ def _restore_shared_owner(path: Path) -> None:
         _log.debug("shared_owner_restore_failed", path=str(path))
 
 
+def _restart_display_manager() -> bool:
+    """Restart the running display manager so it re-reads its theme config.
+
+    SDDM and its derivatives (plasmalogin on KDE Neon) read ``theme.conf``
+    once at greeter startup and never re-read it — "switch user" reuses
+    the existing greeter, so a new wallpaper in ``theme.conf`` is
+    invisible until the DM is restarted. Restarting the DM terminates
+    the current session and shows the new login wallpaper.
+
+    Returns True if a restart was actually performed.
+    """
+    if os.geteuid() != 0:
+        return False  # user-mode apply can't restart a system service
+    import shutil
+    import subprocess
+
+    systemctl = shutil.which("systemctl")
+    if not systemctl:
+        return False
+    # Try the common DM unit names. plasmalogin (KDE Neon) uses its own
+    # unit; Debian/Ubuntu use display-manager.service as a symlink to the
+    # active DM; sddm.service is the upstream name.
+    for unit in ("plasmalogin", "sddm", "display-manager"):
+        probe = subprocess.run(
+            [systemctl, "is-active", "--quiet", unit],
+            check=False,
+            capture_output=True,
+        )
+        if probe.returncode == 0:
+            subprocess.run(
+                [systemctl, "restart", unit], check=False, capture_output=True
+            )
+            return True
+    return False
+
+
 def verify_image(data: bytes) -> bytes:
     """Decode ``data`` with Pillow to confirm it is a valid image.
 
@@ -161,6 +197,7 @@ def apply_to_surfaces(
         _restore_shared_owner(shared_dir)
 
 
+    login_applied = False
     for backend in backends if backends is not None else default_backends(
         accent_color=expanded.surface.login.accent_color
     ):
@@ -170,6 +207,8 @@ def apply_to_surfaces(
             try:
                 backend.apply(manifest, shared)
                 plan.append(f"backend '{backend.name}' applied")
+                if backend.name == "login":
+                    login_applied = True
             except BackendError as exc:
                 plan.append(f"backend '{backend.name}' FAILED: {exc}")
                 if exc.hint:
@@ -295,6 +334,18 @@ def apply_to_surfaces(
                     backend=name,
                     error=msg,
                 )
+
+    # Restart the display manager if the login (SDDM/plasmalogin) theme
+    # config was actually changed. The greeter reads theme.conf once at
+    # startup and "switch user" reuses the existing greeter, so without
+    # a restart the new wallpaper is invisible until the next full
+    # login. This only runs when running as root (it needs to restart a
+    # system service) and only when the login backend actually wrote a
+    # new config (so user-mode applies that didn't touch the login
+    # surface are left alone).
+    if not dry_run and login_applied and _restart_display_manager():
+        plan.append("restarted display manager to apply the new login wallpaper")
+        plan.append("  (your current session is ending; you will be returned to the login screen)")
 
     # Bound undo history: compact the manifest to the most recent
     # retention threshold entries and prune orphaned snapshots. Only

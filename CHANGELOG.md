@@ -89,6 +89,15 @@ adheres to [Semantic Versioning](https://semver.org/).
   the provider's original suggestion.
 - The fadeoutTimer interval matcher tolerates other properties between
   `id: fadeoutTimer` and `interval:`.
+- **Display manager auto-reload:** when `sudo usurface apply` actually
+  changes the SDDM/plasmalogin `theme.conf`, the display manager is
+  automatically restarted so the new login wallpaper is visible on the
+  next greeter launch. Previously the user had to do a full manual
+  logout because "switch user" reuses the existing greeter, which
+  never re-reads `theme.conf`. The restart only happens when running
+  as root and only when the login backend actually wrote a new config
+  (so user-mode applies that didn't touch the login surface are left
+  alone).
 - **Test isolation:** `apply_to_surfaces(backends=[])` now truly skips
   all backends (previously the falsy empty list fell through to
   `default_backends()`, causing integration tests to invoke the real
