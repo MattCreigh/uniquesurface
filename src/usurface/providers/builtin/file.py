@@ -11,6 +11,13 @@ from typing import Any
 
 from usurface.providers import FetchedImage, ProviderError
 
+# Refuse to read a local image larger than this into memory before
+# decoding/re-encoding. The orchestrator's verify_image step decodes the
+# full image with Pillow, so an enormous local file (e.g. a 2 GB TIFF)
+# could exhaust memory on a low-RAM laptop. 100 MiB is generous for any
+# real wallpaper and still bounds the worst case.
+_MAX_LOCAL_BYTES = 100 * 1024 * 1024
+
 _DEFAULT_OPTIONS: dict[str, Any] = {}
 
 
@@ -23,6 +30,13 @@ def fetch(options: dict[str, Any]) -> FetchedImage:
     path = Path(os.path.expandvars(os.path.expanduser(raw)))
     if not path.is_file():
         raise ProviderError(f"file provider: file not found: {path}")
+
+    size = path.stat().st_size
+    if size > _MAX_LOCAL_BYTES:
+        raise ProviderError(
+            f"file provider: {path} is {size} bytes which exceeds the "
+            f"{_MAX_LOCAL_BYTES}-byte local-file cap"
+        )
 
     data = path.read_bytes()
     suffix = path.suffix.lower()

@@ -41,6 +41,18 @@ def fake_kwriteconfig(monkeypatch: pytest.MonkeyPatch):
         calls.append(argv)
 
     monkeypatch.setattr("usurface.backends.lock._kwriteconfig_nested", fake_nested)
+
+    # Mock the live lock-screen reload so tests never invoke a real qdbus6.
+    reload_calls: list[list[str]] = []
+
+    def fake_reload(*, dry_run=False):  # type: ignore[no-untyped-def]
+        reload_calls.append(
+            ["qdbus6", "org.freedesktop.ScreenSaver",
+             "/org/freedesktop/ScreenSaver", "org.kde.screensaver.configure"]
+        )
+        return reload_calls[-1]
+
+    monkeypatch.setattr("usurface.backends._kconfig.reload_lockscreen_config", fake_reload)
     return calls
 
 
@@ -80,3 +92,5 @@ def test_lock_dry_run_plan_includes_nested() -> None:
     plan = backend.dry_run_plan(Path("/tmp/wall.jpg"))
     assert any("WallpaperPlugin" in line for line in plan)
     assert any("Wallpaper" in line and "General" in line for line in plan)
+    # The live reload of the running kscreenlocker must be in the plan.
+    assert any("org.kde.screensaver.configure" in line for line in plan)

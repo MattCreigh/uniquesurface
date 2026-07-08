@@ -122,11 +122,68 @@ _SOLID_INFO = ProviderInfo(
 
 
 def make_plugin_manager() -> pluggy.PluginManager:
-    """Return a configured plugin manager with all built-ins registered."""
+    """Return a configured plugin manager with all built-ins registered.
+
+    Third-party providers are loaded via the ``usurface.providers``
+    setuptools entry-point group so users can install a pip/uv package
+    that declares an entry point and select it via ``[surface.source]
+    provider = "<name>"``. Third-party providers run as the invoking
+    user and may read network resources — treat the entry-point group as
+    a supply-chain surface and only install providers you trust (see
+    ``providers/README.md``).
+    """
     pm = pluggy.PluginManager("usurface")
     pm.add_hookspecs(ProviderHooks)
     _register_builtins(pm)
+    _register_entry_point_plugins(pm)
     return pm
+
+
+def _register_entry_point_plugins(pm: pluggy.PluginManager) -> None:
+    """Register any third-party provider plugins discovered via the
+    ``usurface.providers`` setuptools entry-point group.
+
+    Discovery failures (a package declares the entry point but the
+    object cannot be imported) are logged at warning level and skipped
+    so one broken plugin cannot prevent the built-ins from working.
+    """
+    import logging
+
+    log = logging.getLogger(__name__)
+    try:
+        # importlib.metadata is stdlib on 3.12.
+        from importlib.metadata import entry_points
+    except Exception:  # pragma: no cover - 3.12 always has this
+        return
+
+    try:
+        eps = entry_points(group="usurface.providers")
+    except TypeError:
+        # Older importlib.metadata API (pre-3.10) returns a dict-like.
+        try:
+            eps = entry_points().get("usurface.providers", [])  # type: ignore[attr-defined]
+        except Exception:
+            return
+    for ep in eps:
+        try:
+            plugin = ep.load()
+        except Exception as exc:  # noqa: BLE001
+            log.warning(
+                "provider_entry_point_load_failed",
+                extra={"entry_point": ep.name, "error": str(exc)},
+            )
+            continue
+        try:
+            pm.register(plugin, name=ep.name)
+            log.info(
+                "provider_entry_point_loaded",
+                extra={"entry_point": ep.name},
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning(
+                "provider_entry_point_register_failed",
+                extra={"entry_point": ep.name, "error": str(exc)},
+            )
 
 
 def _register_builtins(pm: pluggy.PluginManager) -> None:

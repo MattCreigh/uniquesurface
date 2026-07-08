@@ -99,6 +99,17 @@ class LockBackend:
                 ),
             ) from exc
 
+        # Ask the running kscreenlocker to re-read its config so the
+        # *next* lock uses the new wallpaper, without needing to lock
+        # and unlock first. Best-effort: a no-op if the ScreenSaver
+        # service is not on the bus (headless / not yet running).
+        try:
+            _kconfig.reload_lockscreen_config()
+        except _kconfig.KConfigToolMissing:
+            _log.warning(
+                "qdbus6 not available; lock screen will reload on next lock"
+            )
+
         new_sha = sha256_file(file_path)
         manifest.append(
             op="write",
@@ -116,6 +127,7 @@ class LockBackend:
             f"kwriteconfig6 --file {file_path} --group {_GROUP} --key {_WALLPAPER_KEY} {_PLUGIN_VALUE}",
             f"kwriteconfig6 --file {file_path} --group {_GROUP} --key {_IMAGE_KEY} {uri}",
             f"kwriteconfig6 --file {file_path} --group {nested} --key {_IMAGE_KEY} {uri}",
+            "qdbus6 org.freedesktop.ScreenSaver /org/freedesktop/ScreenSaver org.kde.screensaver.configure",
         ]
 
 

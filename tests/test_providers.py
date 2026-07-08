@@ -29,6 +29,81 @@ def test_registry_registers_three_builtins() -> None:
     assert names == {"bing", "file", "solid"}
 
 
+def test_third_party_entry_point_plugin_is_loaded(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A package declaring a ``usurface.providers`` entry point is loaded
+    by ``make_plugin_manager`` and appears alongside the built-ins."""
+    from usurface.providers import (
+        FetchedImage,
+        ProviderInfo,
+        _BuiltinPlugin,
+        list_providers,
+        make_plugin_manager,
+    )
+
+    class FakeEntryPoint:
+        def __init__(self, name: str, plugin: object) -> None:
+            self.name = name
+            self._plugin = plugin
+
+        def load(self) -> object:
+            return self._plugin
+
+    plugin = _BuiltinPlugin(
+        "my-plugin",
+        ProviderInfo(
+            name="my-plugin",
+            description="A fake third-party provider.",
+            builtin=False,
+        ),
+        lambda options: FetchedImage(
+            data=b"\xff\xd8\xff" + b"x",
+            content_type="image/jpeg",
+            suggested_extension=".jpg",
+        ),
+    )
+    fake_eps = [FakeEntryPoint("my-plugin", plugin)]
+
+    # importlib.metadata.entry_points(group=...) returns a list; patch it.
+    import importlib.metadata as ilm
+
+    def fake_entry_points(group=None):  # type: ignore[no-untyped-def]
+        if group == "usurface.providers":
+            return fake_eps
+        return []
+
+    monkeypatch.setattr(ilm, "entry_points", fake_entry_points)
+
+    pm = make_plugin_manager()
+    names = {i.name for i in list_providers(pm)}
+    assert "my-plugin" in names
+    assert "bing" in names  # built-ins still registered
+
+
+def test_broken_entry_point_is_skipped(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A third-party entry point that raises on load is logged and skipped;
+    the built-ins still register so a broken plugin cannot brick apply."""
+
+    class BrokenEntryPoint:
+        name = "broken-plugin"
+
+        def load(self) -> object:
+            raise ImportError("broken plugin")
+
+    import importlib.metadata as ilm
+
+    def fake_entry_points(group=None):  # type: ignore[no-untyped-def]
+        if group == "usurface.providers":
+            return [BrokenEntryPoint()]
+        return []
+
+    monkeypatch.setattr(ilm, "entry_points", fake_entry_points)
+
+    pm = make_plugin_manager()
+    names = {i.name for i in list_providers(pm)}
+    assert "broken-plugin" not in names
+    assert {"bing", "file", "solid"} == names
+
+
 def test_get_provider_returns_matching_plugin() -> None:
     pm = make_plugin_manager()
     plugin = get_provider(pm, "solid")

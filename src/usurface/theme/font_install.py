@@ -100,13 +100,27 @@ def install(
 
 
 def is_installed(family: str = "Inter") -> bool:
-    """Best-effort check whether ``family`` resolves via fontconfig."""
+    """Best-effort check whether ``family`` resolves via fontconfig.
+
+    Uses ``fc-match --format`` to print only the resolved family name,
+    so the match is exact rather than a substring of the full fc-match
+    line (which previously let "Inter" match "Inter Dimensional").
+    """
     fc_match = shutil.which("fc-match")
     if not fc_match:
         return False
     import subprocess
 
+    # fc-match -f "%{family}" prints the resolved family for the query.
+    # We compare case-insensitively on the first whitespace-delimited
+    # token of both the query and the result so "Inter" matches
+    # "Inter" but not "Inter Dim".
     out = subprocess.run(
-        [fc_match, family], capture_output=True, text=True, check=False
+        [fc_match, family, "--format", "%{family}"],
+        capture_output=True,
+        text=True,
+        check=False,
     )
-    return family.split()[0].lower() in out.stdout.lower()
+    resolved = out.stdout.strip().split(",")[0].strip().lower()
+    wanted = family.strip().split()[0].lower()
+    return bool(resolved) and resolved == wanted

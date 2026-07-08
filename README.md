@@ -5,7 +5,7 @@
   [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
   [![KDE Plasma 6](https://img.shields.io/badge/KDE-Plasma%206-1d99f3.svg?logo=kde)](https://kde.org/plasma-desktop/)
   [![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/License-PolyForm%20Noncommercial-yellow.svg)](LICENSE)
-  [![Tests](https://img.shields.io/badge/tests-86%20passed-success)](https://pytest.org/)
+  [![Tests](https://img.shields.io/badge/tests-107%20passed-success)](https://pytest.org/)
 </div>
 
 > [!NOTE]

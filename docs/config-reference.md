@@ -25,7 +25,6 @@ accent_color = "#1d99f3"
 
 [surface.lock]       # optional, defaults shown
 on_idle_dim_seconds = 10
-suppress_wake_keypress = true
 
 [surface.behaviour]  # optional, defaults shown
 shared_dir = "/usr/local/share/wallpapers"
@@ -81,15 +80,17 @@ Tokens applied to the Plasma lock screen (`LockScreenUi.qml`).
 
 - `on_idle_dim_seconds`: seconds before the lock screen dims. Rewrites
   the `fadeoutTimer` interval (seconds → milliseconds) in
-  `LockScreenUi.qml`. A value of `0` sets `interval: 0` (the timer
-  fires immediately, effectively never dimming). Evidence:
-  `LockScreenUi.qml:164-166` `Timer { id: fadeoutTimer; interval: 10000 }`.
-- `suppress_wake_keypress`: if true, the first keypress that wakes the
-  locked screen should be consumed (not forwarded to the password
-  field). **Not yet implemented** — the `Keys.onPressed` handler
-  structure (`LockScreenUi.qml:160-163`) makes a safe in-place
-  structural edit fragile; the field is accepted and validated but
-  currently a documented no-op.
+  `LockScreenUi.qml`. A value of `0` sets `interval: 0`, which makes the
+  timer fire immediately — the lock-screen UI dims as soon as it wakes.
+  Use a positive value unless you want an always-dimmed lock screen.
+  Evidence: `LockScreenUi.qml:164-166`
+  `Timer { id: fadeoutTimer; interval: 10000 }`.
+
+> **Removed:** `suppress_wake_keypress` was removed because the
+> `Keys.onPressed` handler structure (`LockScreenUi.qml:160-163`) makes
+> a safe in-place structural edit fragile; the option could never be
+> implemented. Existing config files containing it still load — the key
+> is stripped with a warning rather than failing validation.
 
 ## `[surface.behaviour]`
 

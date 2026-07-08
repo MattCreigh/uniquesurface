@@ -33,7 +33,6 @@ usurface = "usurface.cli:run"
 dev = [
   "ruff>=0.8",
   "mypy>=1.10",
-  "fonttools>=4.5",
 ]
 
 [project.optional-dependencies]

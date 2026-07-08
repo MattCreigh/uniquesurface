@@ -1,11 +1,30 @@
 """Desktop wallpaper backend.
 
 Writes ``~/.config/plasma-org.kde.plasma.desktop-appletsrc`` via
-``kwriteconfig6`` and asks Plasma to refresh its wallpaper.
+``kwriteconfig6`` and asks the running Plasma shell to apply the new
+wallpaper *live* (without a visible reload/flip).
+
+The real desktop wallpaper lives at::
+
+    [Containments][<id>][Wallpaper][org.kde.image][General]
+    Image=<file:// URI>
+
+where ``<id>`` is the numeric containment id of each desktop containment.
+Plasma ignores the flat ``[Containments]`` group for wallpaper purposes,
+so we must discover each real containment id at runtime by parsing the
+appletsrc file (kwriteconfig6 has no list-groups verb). We write the
+nested group for every desktop containment so multi-screen / multi-activity
+setups all update.
+
+For the live update we call the PlasmaShell ``evaluateScript`` D-Bus
+method (service ``org.kde.plasmashell``), which iterates every desktop
+containment and writes ``Image`` through the same path Plasma's own
+settings UI uses — the swap is atomic and invisible to the user.
 """
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from usurface import paths as _paths
@@ -16,19 +35,66 @@ from usurface.manifest import Manifest
 
 _log = get_logger(__name__)
 
-_GROUP = "Containments"
+_APPLET_FILE = "plasma-org.kde.plasma.desktop-appletsrc"
 _DESKTOP_KEY = "Image"
 _PLUGIN_KEY = "wallpaperplugin"
 _DEFAULT_PLUGIN = "org.kde.image"
+_WALLPAPER_SUBGROUPS = ["Wallpaper", _DEFAULT_PLUGIN, "General"]
+
+# Matches ``[Containments][<id>]`` header lines in the appletsrc.
+_CONTAINMENT_RE = re.compile(r"^\[Containments\]\[(\d+)\]$")
+
+
+def _appletsrc_path() -> Path:
+    return _paths.config_dir().parent / _APPLET_FILE
+
+
+def _discover_desktop_containments(appletsrc: Path) -> list[int]:
+    """Return the numeric ids of every desktop containment in ``appletsrc``.
+
+    A containment is a top-level ``[Containments][<id>]`` group whose
+    ``wallpaperplugin=`` key is set. Panels and other non-desktop
+    containments also carry ``wallpaperplugin``, so we include every
+    containment that declares one — the live ``evaluateScript`` call
+    targets only ``desktops()`` and so is naturally scoped. If none
+    match (a fresh install with no appletsrc yet) we return an empty
+    list and the live D-Bus script handles the apply.
+    """
+    if not appletsrc.is_file():
+        return []
+    ids: list[int] = []
+    current_id: int | None = None
+    has_wallpaper_plugin = False
+    for line in appletsrc.read_text(encoding="utf-8", errors="replace").splitlines():
+        m = _CONTAINMENT_RE.match(line)
+        if m:
+            # Flush the previous containment if it had a wallpaperplugin.
+            if current_id is not None and has_wallpaper_plugin:
+                ids.append(current_id)
+            current_id = int(m.group(1))
+            has_wallpaper_plugin = False
+            continue
+        if current_id is not None and line.startswith("["):
+            # New subgroup; the wallpaperplugin= key, if present, was on
+            # the containment header block which we've now left.
+            if has_wallpaper_plugin and current_id not in ids:
+                ids.append(current_id)
+            current_id = None
+            has_wallpaper_plugin = False
+            continue
+        if current_id is not None and line.startswith(f"{_PLUGIN_KEY}="):
+            has_wallpaper_plugin = True
+    # Flush the last containment.
+    if current_id is not None and has_wallpaper_plugin and current_id not in ids:
+        ids.append(current_id)
+    return ids
 
 
 class DesktopBackend:
     name = "desktop"
 
     def apply(self, manifest: Manifest, wallpaper: Path) -> None:
-        file_path = (
-            _paths.config_dir().parent / "plasma-org.kde.plasma.desktop-appletsrc"
-        )
+        file_path = _appletsrc_path()
         file_path.parent.mkdir(parents=True, exist_ok=True)
         uri = wallpaper.resolve().as_uri()
 
@@ -36,15 +102,41 @@ class DesktopBackend:
 
         prev_sha, prev_snap = snapshot_previous_bytes(manifest, file_path)
 
-        # We rely on kwriteconfig6 here so Plasma reads the change in
-        # the canonical INI format; this is what Plasma itself writes.
+        # Write the wallpaper into the *real* containment group(s).
+        # Plasma ignores the flat ``[Containments]`` group for wallpaper,
+        # so we discover each desktop containment id and write the nested
+        # ``[Containments][<id>][Wallpaper][org.kde.image][General]``
+        # Image= key for each. We also write the flat group as a fallback
+        # so a fresh install (no appletsrc) still has a discoverable
+        # wallpaperplugin/Image pair.
         try:
             _kconfig.kwriteconfig(
-                file=file_path, group=_GROUP, key=_PLUGIN_KEY, value=_DEFAULT_PLUGIN
+                file=file_path,
+                group="Containments",
+                key=_PLUGIN_KEY,
+                value=_DEFAULT_PLUGIN,
             )
             _kconfig.kwriteconfig(
-                file=file_path, group=_GROUP, key=_DESKTOP_KEY, value=uri
+                file=file_path,
+                group="Containments",
+                key=_DESKTOP_KEY,
+                value=uri,
             )
+            # Re-read the file we just wrote so the containment discovery
+            # sees the wallpaperplugin key we just added.
+            containment_ids = _discover_desktop_containments(file_path)
+            for cid in containment_ids:
+                group_path = [
+                    "Containments",
+                    str(cid),
+                    *_WALLPAPER_SUBGROUPS,
+                ]
+                _kconfig.kwriteconfig_nested(
+                    file=file_path,
+                    group_path=group_path,
+                    key=_DESKTOP_KEY,
+                    value=uri,
+                )
         except (_kconfig.KConfigToolMissing, FileNotFoundError, OSError) as exc:
             raise BackendError(
                 f"failed to update Plasma desktop config: {exc}",
@@ -54,16 +146,20 @@ class DesktopBackend:
                 ),
             ) from exc
 
-        # Plasma may not be running (e.g. a Wayland session that just
-        # started). The qdbus call is best-effort; log but don't fail.
+        # Apply the new wallpaper *live* via the PlasmaShell evaluateScript
+        # D-Bus method. This writes the same nested Image key through the
+        # running shell and swaps the wallpaper atomically — no visible
+        # reload/flip. Best-effort: if Plasma isn't running, the config
+        # file has already been updated and the wallpaper applies on next
+        # start.
         try:
-            _kconfig.qdbus_call(
-                service="org.kde.plasma.desktop",
-                path="/PlasmaShell",
-                method="refreshWallpaper",
+            _kconfig.evaluate_wallpaper_script(
+                image_uri=uri, plugin=_DEFAULT_PLUGIN
             )
         except _kconfig.KConfigToolMissing:
-            _log.warning("qdbus6 not available; skipping wallpaper refresh hint")
+            _log.warning(
+                "qdbus6 not available; desktop wallpaper will apply on next Plasma start"
+            )
 
         new_sha = sha256_file(file_path)
         manifest.append(
@@ -75,13 +171,19 @@ class DesktopBackend:
         )
 
     def dry_run_plan(self, wallpaper: Path) -> list[str]:
-        file_path = (
-            _paths.config_dir().parent / "plasma-org.kde.plasma.desktop-appletsrc"
-        )
+        file_path = _appletsrc_path()
         uri = wallpaper.resolve().as_uri()
+        ids = _discover_desktop_containments(file_path)
         plan = [
-            f"kwriteconfig6 --file {file_path} --group {_GROUP} --key {_PLUGIN_KEY} {_DEFAULT_PLUGIN}",
-            f"kwriteconfig6 --file {file_path} --group {_GROUP} --key {_DESKTOP_KEY} {uri}",
-            "qdbus6 org.kde.plasma.desktop /PlasmaShell refreshWallpaper",
+            f"kwriteconfig6 --file {file_path} --group Containments --key {_PLUGIN_KEY} {_DEFAULT_PLUGIN}",
+            f"kwriteconfig6 --file {file_path} --group Containments --key {_DESKTOP_KEY} {uri}",
         ]
+        for cid in ids:
+            group = "][".join(["Containments", str(cid), *_WALLPAPER_SUBGROUPS])
+            plan.append(
+                f"kwriteconfig6 --file {file_path} --group {group} --key {_DESKTOP_KEY} {uri}"
+            )
+        plan.append(
+            f"qdbus6 org.kde.plasmashell /PlasmaShell evaluateScript <set Image={uri} on all desktops>"
+        )
         return plan

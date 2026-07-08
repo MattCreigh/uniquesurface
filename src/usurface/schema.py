@@ -27,6 +27,23 @@ _PROVIDER_RE = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 # Font family names: more permissive than providers; allow spaces.
 _FONT_FAMILY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 _.-]{0,127}$")
 
+# Qt font weight tokens accepted by QML's FontLoader / Text.weight.
+# Numeric weights (0-1000) are also valid in QML but the QML patcher writes
+# the value into a ``property string fontWeight`` literal, so we accept the
+# standard named tokens here. Numeric values are accepted too (as strings).
+_FONT_WEIGHT_RE = re.compile(
+    r"^(Thin|ExtraLight|Light|Normal|Medium|DemiBold|Bold|ExtraBold|Black"
+    r"|100|200|300|400|500|600|700|800|900)$",
+    re.IGNORECASE,
+)
+
+# Qt date/time format tokens. We allow the common format characters and
+# literal text/punctuation. Reject control chars and quotes (the value is
+# written into a QML string literal, which is escaped separately, but we
+# reject quotes here to surface typos early rather than silently produce
+# a broken clock).
+_CLOCK_FORMAT_RE = re.compile(r"^[A-Za-z0-9 :/\-.,'apApMhHmszyZ ]{0,64}$")
+
 
 class _StrictModel(BaseModel):
     """Common config: forbid unknown keys and treat all fields as final."""
@@ -85,6 +102,16 @@ class Fonts(_StrictModel):
             raise ValueError(f"invalid font family name: {value!r}")
         return value
 
+    @field_validator("weight")
+    @classmethod
+    def _check_weight(cls, value: str) -> str:
+        if not _FONT_WEIGHT_RE.match(value):
+            raise ValueError(
+                f"invalid font weight {value!r}; expected a Qt weight token "
+                f"(Thin, Light, Normal, Medium, Bold, Black, ...) or 100-900"
+            )
+        return value
+
 
 class Login(_StrictModel):
     """Login-screen specific tokens.
@@ -98,6 +125,16 @@ class Login(_StrictModel):
 
     clock_format: str = Field(default="hh:mm")
     accent_color: str = Field(default="#1d99f3")
+
+    @field_validator("clock_format")
+    @classmethod
+    def _check_clock_format(cls, value: str) -> str:
+        if not _CLOCK_FORMAT_RE.match(value):
+            raise ValueError(
+                f"invalid clock_format {value!r}; use Qt date/time tokens "
+                f"(e.g. 'hh:mm', 'HH:mm AP')"
+            )
+        return value
 
     @field_validator("accent_color")
     @classmethod
@@ -128,7 +165,13 @@ class Login(_StrictModel):
 
 
 class Lock(_StrictModel):
-    """Lock-screen specific tokens."""
+    """Lock-screen specific tokens.
+
+    ``suppress_wake_keypress``: when true, the keypress that wakes the
+    lock screen is consumed instead of being typed into the password
+    field (implemented by patching the password box's ``Keys.onPressed``
+    handler in ``MainBlock.qml``).
+    """
 
     on_idle_dim_seconds: int = Field(default=10, ge=0, le=600)
     suppress_wake_keypress: bool = Field(default=True)

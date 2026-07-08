@@ -12,6 +12,9 @@ adheres to [Semantic Versioning](https://semver.org/).
 - Atomic file writes (`usurface.atomic`).
 - TOML configuration schema (`usurface.schema`).
 - Bing, file, and solid-colour providers via `pluggy`-style registry.
+- Third-party provider plugins are now loaded via the
+  `usurface.providers` setuptools entry-point group (previously only
+  built-ins were registered, despite the docs advertising extension).
 - Append-only manifest with restore (`~/.local/state/usurface/manifest.jsonl`).
 - Desktop, lock, and login backends.
 - QML patching with sentinel markers + drift detection.
@@ -34,6 +37,25 @@ adheres to [Semantic Versioning](https://semver.org/).
   `handle_drift` now raises `DriftError`; the user must explicitly
   consent via `usurface qml-update-templates` or `usurface apply
   --adopt-drift`.
+- **Desktop wallpaper now actually updates and applies live.** The
+  desktop backend previously wrote the flat `[Containments]` group
+  (which Plasma ignores for wallpaper) and called a non-existent D-Bus
+  method (`org.kde.plasma.desktop /PlasmaShell refreshWallpaper`). It now
+  writes the real `[Containments][<id>][Wallpaper][org.kde.image]
+  [General] Image=` group for every desktop containment and applies the
+  change live via `org.kde.plasmashell /PlasmaShell evaluateScript` —
+  the same path Plasma's settings UI uses — so the wallpaper swaps
+  atomically with no visible reload/flip on login.
+- **Lock screen wallpaper now reloads live.** After writing
+  `kscreenlockerrc` the backend calls
+  `org.freedesktop.ScreenSaver /org/freedesktop/ScreenSaver
+  org.kde.screensaver.configure()` so the running kscreenlocker picks
+  up the new image without needing to lock+unlock.
+- `clock_format` and `font weight` are now validated (Qt date-time
+  tokens; Qt weight tokens / 100-900). `font_install.is_installed` now
+  uses `fc-match --format` for an exact family match instead of a
+  substring match. The `file` provider refuses files larger than 100 MiB
+  to bound memory use. The unused `fonttools` dev dependency was removed.
 
 ### Added (Appendix B)
 
@@ -45,7 +67,4 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ### Known limitations
 
-- No vendored Inter font bundled (font install requires the user to
-  provide one or install Inter system-wide themselves). The
-  `font_install` module ships ready to copy a font when present.
 - Template versioning per Plasma minor release is deferred to v2.

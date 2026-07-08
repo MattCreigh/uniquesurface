@@ -49,8 +49,11 @@ class LockPatch:
     """Lock-screen tokens applied as structural QML edits.
 
     ``on_idle_dim_seconds`` rewrites the ``fadeoutTimer`` interval
-    (seconds → milliseconds). ``suppress_wake_keypress`` is currently
-    a documented no-op (see A4 fallback in docs/config-reference.md).
+    (seconds → milliseconds) in ``LockScreenUi.qml``.
+    ``suppress_wake_keypress`` inserts a guard into the password box's
+    ``Keys.onPressed`` handler in ``MainBlock.qml`` so the keypress that
+    wakes the lock screen is consumed instead of being typed into the
+    password field.
     """
 
     on_idle_dim_seconds: int
@@ -83,6 +86,44 @@ def _ensure_sentinels(text: str, block: str) -> str:
 
 def _file_with_sentinels(text: str) -> bool:
     return SENTINEL_START in text and SENTINEL_END in text
+
+
+_SENTINEL_BODY_RE = re.compile(
+    re.escape(SENTINEL_START) + r"\n?(.*?)\n?" + re.escape(SENTINEL_END),
+    re.DOTALL,
+)
+
+
+def _merged_marker_block(text: str, marker_line: str, key_prefix: str) -> str:
+    """Merge ``marker_line`` into the existing sentinel body of ``text``.
+
+    Both :func:`apply_font_tokens` and :func:`apply_lock_tokens` may
+    manage the same file (the lock-screen UI), each recording one marker
+    comment line. Replacing the whole sentinel body would clobber the
+    other patcher's line, so instead the line starting with
+    ``key_prefix`` is replaced in place (preserving line order so a
+    re-patch is a true no-op) and other lines are kept verbatim. If no
+    sentinel region exists yet, the block is just ``marker_line``.
+    """
+    marker = marker_line.rstrip("\n")
+    existing: list[str] = []
+    m = _SENTINEL_BODY_RE.search(text)
+    if m:
+        existing = [ln for ln in m.group(1).splitlines() if ln.strip()]
+
+    out: list[str] = []
+    replaced = False
+    for ln in existing:
+        if ln.startswith(key_prefix):
+            if not replaced:
+                out.append(marker)
+                replaced = True
+            # drop any duplicate lines with the same prefix
+        else:
+            out.append(ln)
+    if not replaced:
+        out.append(marker)
+    return "\n".join(out) + "\n"
 
 
 def apply_font_tokens(
@@ -137,16 +178,13 @@ def apply_font_tokens(
     if replaced_count == 0 and not _file_with_sentinels(text):
         return f"{name}: no managed properties present; skipped"
 
-    has_sentinels = _file_with_sentinels(new_text)
-    marker_block = f"// fontFamily={patch.family} fontWeight={patch.weight}\n"
-    if not has_sentinels:
-        if require_sentinels:
-            raise RuntimeError(
-                f"{vendor_path} does not contain sentinels and require_sentinels=True"
-            )
-        new_text = _ensure_sentinels(new_text, marker_block)
-    else:
-        new_text = _ensure_sentinels(new_text, marker_block)
+    if require_sentinels and not _file_with_sentinels(new_text):
+        raise RuntimeError(
+            f"{vendor_path} does not contain sentinels and require_sentinels=True"
+        )
+    marker = f"// fontFamily={patch.family} fontWeight={patch.weight}\n"
+    block = _merged_marker_block(new_text, marker, "// fontFamily=")
+    new_text = _ensure_sentinels(new_text, block)
 
     if new_text == text:
         return f"{name}: no change"
@@ -210,7 +248,7 @@ def remove_sentinels(*, name: str, vendor_path: Path, manifest: Manifest) -> str
     return f"{name}: restored to pristine"
 
 
-# --- lock-screen structural patching (A3: fadeoutTimer interval) ---
+# --- lock-screen structural patching ------------------------------------
 
 # The fadeoutTimer in LockScreenUi.qml controls how long the lock screen
 # stays visible before dimming. Its interval is a literal in milliseconds.
@@ -218,6 +256,63 @@ _FADEOUT_TIMER_INTERVAL_RE = re.compile(
     r"(Timer\s*\{\s*id:\s*fadeoutTimer\s*\n\s*interval:\s*)\d+",
     re.DOTALL,
 )
+
+# suppress_wake_keypress: the password box in MainBlock.qml has
+# ``focus: true``, so its ``Keys.onPressed`` attached handler (default
+# priority BeforeItem) sees every keypress before the TextField inserts
+# the character. The guard consumes a text-producing keypress that
+# arrives while the lock-screen UI is hidden — waking the UI without
+# typing a stray character into the password field. The insertion is
+# anchored on the vendor handler's first statement (the Key_Left
+# user-switch branch) so unrelated ``Keys.onPressed`` handlers are
+# never touched. ``lockScreenRoot`` resolves via the QML context chain
+# from the instantiating LockScreenUi.qml document.
+WAKE_GUARD_MARKER = "// @usurface:suppress_wake_keypress"
+_WAKE_HANDLER_ANCHOR_RE = re.compile(
+    r"(Keys\.onPressed:\s*event\s*=>\s*\{\n)"
+    r"([ \t]*)(?=if \(event\.key === Qt\.Key_Left)"
+)
+_WAKE_GUARD_BLOCK_RE = re.compile(
+    r"[ \t]*if \(!lockScreenRoot\.uiVisible[^\n]*"
+    + re.escape(WAKE_GUARD_MARKER)
+    + r"\n(?:[^\n]*\n){3}[ \t]*\}\n"
+)
+
+
+def _wake_guard_block(indent: str) -> str:
+    inner = indent + "    "
+    return (
+        f'{indent}if (!lockScreenRoot.uiVisible && event.text !== "") '
+        f"{{ {WAKE_GUARD_MARKER}\n"
+        f"{inner}lockScreenRoot.uiVisible = true;\n"
+        f"{inner}event.accepted = true;\n"
+        f"{inner}return;\n"
+        f"{indent}}}\n"
+    )
+
+
+def _apply_wake_guard(text: str, *, enable: bool) -> tuple[str, bool]:
+    """Insert or remove the wake-keypress guard.
+
+    Returns ``(new_text, handler_present)`` where ``handler_present``
+    is True when the file contains the password-box key handler (or an
+    already-inserted guard) that this edit manages.
+    """
+    has_guard = WAKE_GUARD_MARKER in text
+    if enable:
+        if has_guard:
+            return text, True
+        m = _WAKE_HANDLER_ANCHOR_RE.search(text)
+        if m is None:
+            return text, False
+        indent = m.group(2)
+        return (
+            text[: m.end(1)] + _wake_guard_block(indent) + text[m.end(1) :],
+            True,
+        )
+    if has_guard:
+        return _WAKE_GUARD_BLOCK_RE.sub("", text, count=1), True
+    return text, _WAKE_HANDLER_ANCHOR_RE.search(text) is not None
 
 
 def apply_lock_tokens(
@@ -229,14 +324,19 @@ def apply_lock_tokens(
 ) -> str:
     """Apply ``patch`` to a lock-screen QML file.
 
-    Currently rewrites the ``fadeoutTimer`` interval (seconds → ms) for
-    ``on_idle_dim_seconds``. If the file has no ``fadeoutTimer`` this is
-    a no-op skip (the file may simply not declare it).
+    Two structural edits, each a no-op if its anchor is absent from the
+    file (the two live in different vendor files):
+
+    - ``on_idle_dim_seconds`` rewrites the ``fadeoutTimer`` interval
+      (seconds → ms) in ``LockScreenUi.qml``.
+    - ``suppress_wake_keypress`` inserts (or, when false, removes) a
+      guard in the password box's ``Keys.onPressed`` handler in
+      ``MainBlock.qml`` that consumes the keypress waking a hidden UI.
 
     A sentinel *comment* region records that the file is managed by
-    usurface (for drift detection / restore). The interval edit itself
-    is outside the sentinel region but is normalized in
-    :func:`drift.strip_sentinels` so it doesn't register as drift.
+    usurface (for drift detection / restore). The edits themselves are
+    outside the sentinel region but are normalized in
+    :func:`drift.strip_sentinels` so they don't register as drift.
 
     Returns a one-line description of the action taken.
     """
@@ -253,19 +353,27 @@ def apply_lock_tokens(
 
     # Rewrite the fadeoutTimer interval: seconds → milliseconds.
     interval_ms = patch.on_idle_dim_seconds * 1000
-    new_text, n = _FADEOUT_TIMER_INTERVAL_RE.subn(
+    new_text, n_timer = _FADEOUT_TIMER_INTERVAL_RE.subn(
         rf"\g<1>{interval_ms}", text, count=1
     )
 
-    if n == 0 and not _file_with_sentinels(text):
-        return f"{name}: no fadeoutTimer present; skipped"
+    # Insert/remove the wake-keypress guard in the password box handler.
+    new_text, handler_present = _apply_wake_guard(
+        new_text, enable=patch.suppress_wake_keypress
+    )
+
+    if n_timer == 0 and not handler_present and not _file_with_sentinels(text):
+        return f"{name}: no managed lock-screen structures present; skipped"
 
     # Sentinel marker (comment-only, valid QML) for drift tracking.
+    # Merged into the existing sentinel body so the font patcher's
+    # marker line on the same file is preserved.
     marker = (
         f"// on_idle_dim_seconds={patch.on_idle_dim_seconds} "
-        f"suppress_wake_keypress={patch.suppress_wake_keypress}\n"
+        f"suppress_wake_keypress={str(patch.suppress_wake_keypress).lower()}\n"
     )
-    new_text = _ensure_sentinels(new_text, marker)
+    block = _merged_marker_block(new_text, marker, "// on_idle_dim_seconds=")
+    new_text = _ensure_sentinels(new_text, block)
 
     if new_text == text:
         return f"{name}: no change"

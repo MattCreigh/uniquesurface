@@ -74,6 +74,12 @@ def strip_sentinels(text: str) -> str:
         stripped,
         flags=re.DOTALL,
     )
+    # Remove the suppress_wake_keypress guard (inserted into the
+    # password box's Keys.onPressed handler in MainBlock.qml) so the
+    # patched file compares equal to the pristine vendor content.
+    from usurface.theme.qml_patch import _WAKE_GUARD_BLOCK_RE
+
+    stripped = _WAKE_GUARD_BLOCK_RE.sub("", stripped)
     return stripped
 
 
@@ -184,21 +190,34 @@ def handle_drift(name: str, vendor_path: Path) -> Path | None:
 
     log = get_logger(__name__)
 
-    # 1. Save backup
-    ts = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
-    backup_path = vendor_path.parent / f"{vendor_path.name}.usurface.drift.{ts}"
-    log.warning(
-        "drift detected; creating backup",
-        vendor_path=vendor_path,
-        backup_path=backup_path,
-    )
-    try:
-        shutil.copy2(vendor_path, backup_path)
-    except PermissionError as exc:
-        raise PermissionError(
-            f"Cannot create backup {backup_path}: permission denied. "
-            "Please run as root/sudo to patch system files."
-        ) from exc
+    # 1. Save backup — unless an earlier run already backed up this exact
+    #    content. Under the daily timer, unresolved drift would otherwise
+    #    create one timestamped backup per apply, accumulating forever in
+    #    the vendor directory.
+    current_sha = sha256_file(vendor_path)
+    existing = _existing_backup(vendor_path, current_sha)
+    if existing is not None:
+        log.warning(
+            "drift detected; backup with identical content already exists",
+            vendor_path=vendor_path,
+            backup_path=existing,
+        )
+        backup_path = existing
+    else:
+        ts = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
+        backup_path = vendor_path.parent / f"{vendor_path.name}.usurface.drift.{ts}"
+        log.warning(
+            "drift detected; creating backup",
+            vendor_path=vendor_path,
+            backup_path=backup_path,
+        )
+        try:
+            shutil.copy2(vendor_path, backup_path)
+        except PermissionError as exc:
+            raise PermissionError(
+                f"Cannot create backup {backup_path}: permission denied. "
+                "Please run as root/sudo to patch system files."
+            ) from exc
 
     # 2. Refuse to adopt the drifted content as pristine. Raise so the
     #    orchestrator can skip this file and report the remediation.
@@ -209,6 +228,19 @@ def handle_drift(name: str, vendor_path: Path) -> Path | None:
         pristine_sha=report.pristine_sha,
         on_disk_sha=report.on_disk_stripped_sha,
     )
+
+
+def _existing_backup(vendor_path: Path, content_sha: str | None) -> Path | None:
+    """Return an existing drift backup of ``vendor_path`` whose content
+    matches ``content_sha``, or None if there is none."""
+    if content_sha is None:
+        return None
+    for candidate in sorted(
+        vendor_path.parent.glob(f"{vendor_path.name}.usurface.drift.*")
+    ):
+        if sha256_file(candidate) == content_sha:
+            return candidate
+    return None
 
 
 def on_disk_file_hash(path: Path) -> str | None:
