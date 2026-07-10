@@ -1,5 +1,7 @@
 <div align="center">
+
   <h1>✨ Trinity ✨</h1>
+
   <p><strong>Unified Plasma 6 surface-set manager — desktop, lock screen, and SDDM login, in sync.</strong></p>
 
   [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
@@ -8,6 +10,8 @@
   [![CI](https://github.com/MattCreigh/trinity/actions/workflows/ci.yml/badge.svg)](https://github.com/MattCreigh/trinity/actions/workflows/ci.yml)
 
 </div>
+
+
 
 > [!NOTE]
 > **AI-Assisted Development**
