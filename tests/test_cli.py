@@ -91,6 +91,10 @@ def test_apply_real_writes_files(
     from trinity.backends import login as login_mod
 
     monkeypatch.setattr(login_mod, "_THEME_CONF_PATH", fake_sddm)
+    # Phase 5: wallpaper-only writes go to theme.conf.user alongside
+    # the vendor theme.conf.  Point the .user path at a sibling file.
+    fake_sddm_user = fake_sddm.parent / "theme.conf.user"
+    monkeypatch.setattr(login_mod, "_THEME_CONF_USER_PATH", fake_sddm_user)
 
     # Mock extract targets and pristine template directory
     from trinity import paths
@@ -175,8 +179,11 @@ user_dir = "{user_state}"
     shared = tmp_path / "shared"
     assert (user_state / "last_wallpaper.jpg").exists()
     assert (shared / "last_wallpaper.jpg").exists()
-    # SDDM theme.conf got updated to point at the shared wallpaper.
-    assert "last_wallpaper.jpg" in fake_sddm.read_text()
+    # Phase 5: SDDM wallpaper now goes to theme.conf.user (the
+    # sanctioned SDDM override), not the vendor theme.conf.
+    assert "last_wallpaper.jpg" in fake_sddm_user.read_text()
+    # The vendor theme.conf is untouched.
+    assert "last_wallpaper.jpg" not in fake_sddm.read_text()
 
     # The manifest has entries (wallpapers, theme.conf, and QML screens)
     from trinity.manifest import Manifest
@@ -391,13 +398,18 @@ def test_login_surface_needs_root_false_when_not_present(
 def test_login_surface_needs_root_true_when_unwritable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """If theme.conf exists, is unwritable, and euid != 0, returns True."""
+    """If theme.conf exists, the user-conf path is unwritable, and
+    euid != 0, returns True."""
     from trinity.backends import login as login_mod
 
     conf = tmp_path / "theme.conf"
     conf.write_text("[General]\n")
-    conf.chmod(0o444)  # read-only
     monkeypatch.setattr(login_mod, "_THEME_CONF_PATH", conf)
+    # Point the user-conf path at a read-only file so _can_write is False.
+    user_conf = tmp_path / "theme.conf.user"
+    user_conf.write_text("[General]\n")
+    user_conf.chmod(0o444)  # read-only
+    monkeypatch.setattr(login_mod, "_THEME_CONF_USER_PATH", user_conf)
     monkeypatch.setattr(login_mod.os, "geteuid", lambda: 1000)
     # _can_write checks os.access; with 0o444 and non-root, it's False.
     assert login_mod.login_surface_needs_root() is True
@@ -411,8 +423,11 @@ def test_login_surface_needs_root_false_when_root(
 
     conf = tmp_path / "theme.conf"
     conf.write_text("[General]\n")
-    conf.chmod(0o444)
     monkeypatch.setattr(login_mod, "_THEME_CONF_PATH", conf)
+    user_conf = tmp_path / "theme.conf.user"
+    user_conf.write_text("[General]\n")
+    user_conf.chmod(0o444)
+    monkeypatch.setattr(login_mod, "_THEME_CONF_USER_PATH", user_conf)
     monkeypatch.setattr(login_mod.os, "geteuid", lambda: 0)
     assert login_mod.login_surface_needs_root() is False
 

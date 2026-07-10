@@ -6,6 +6,37 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed (Phase 5 — sanctioned SDDM override mechanisms)
+
+- **SDDM wallpaper backend no longer edits the vendor `theme.conf`**.
+  Instead it writes `theme.conf.user` alongside the base config. SDDM
+  merges the two (sanctioned mechanism, confirmed in
+  `ThemeConfig.cpp:35-62`), so the vendor file is untouched and a
+  Plasma upgrade doesn't blow away the edit. `restore` deletes
+  `theme.conf.user`. This is the Tier-1 (wallpaper-only) path.
+- **New `src/trinity/backends/sddm_fork.py`** — the Tier-2 (theme
+  tokens) path forks the Breeze theme to
+  `/usr/share/sddm/themes/trinity-breeze/`, records every file in the
+  manifest, patches `metadata.desktop` to rename it to "Trinity
+  Breeze" (so it's distinguishable in the SDDM theme picker), writes
+  the drop-in `/etc/sddm.conf.d/trinity.conf` with
+  `[Theme] Current=trinity-breeze`, and is fully reversible via
+  `remove_fork` / `remove_dropin`. The vendor Breeze theme is never
+  modified.
+- **Lockscreen QML token patching keeps the Phase 4
+  descriptor+canary approach** — the research spike
+  (`docs/design/override-mechanisms.md`) confirmed LNF packages
+  cannot override the lockscreen in Plasma 6 (the lockscreen QML
+  comes from the `Plasma/Shell` package, not an LNF). A full shell
+  package fork for ~3 property edits would mean maintaining ~10 QML
+  files; the canary CI already surfaces upstream drift. The
+  in-place patch path stays for the lockscreen.
+- New design doc: `docs/design/override-mechanisms.md` with the
+  research findings, conclusions per surface, and a manual
+  validation checklist for the maintainer.
+- Tests: 19 new cases (10 login `theme.conf.user` backend, 9 SDDM
+  fork helper). Total 237 pass, 78.90% coverage, ruff/mypy clean.
+
 ### Added (Phase 4 — data-driven patch descriptors + upstream canary CI)
 
 - The QML anchor regexes (managed font properties, fadeout-timer

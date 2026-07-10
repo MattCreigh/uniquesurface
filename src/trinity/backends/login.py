@@ -18,6 +18,11 @@ from trinity.manifest import Manifest
 _BG_LINE_RE = re.compile(r"^(\s*background\s*=\s*).*$", re.MULTILINE)
 _COLOR_LINE_RE = re.compile(r"^(\s*color\s*=\s*).*$", re.MULTILINE)
 _THEME_CONF_PATH = Path("/usr/share/sddm/themes/breeze/theme.conf")
+# As of Phase 5 we also write ``theme.conf.user`` alongside the base
+# config.  SDDM merges ``theme.conf.user`` over ``theme.conf`` so this
+# avoids editing the vendor file — the wallpaper change is reversible
+# by deleting ``theme.conf.user``.
+_THEME_CONF_USER_PATH = Path("/usr/share/sddm/themes/breeze/theme.conf.user")
 _DEFAULT_COMMENT = "# managed by trinity"
 
 
@@ -45,29 +50,45 @@ class LoginBackend:
     def dry_run_plan(self, wallpaper: Path) -> list[str]:
         if not _THEME_CONF_PATH.exists():
             return [f"# {self.name}: {_THEME_CONF_PATH} not present; skipped"]
-        plan = [f"edit {_THEME_CONF_PATH}: set background={wallpaper}"]
+        # Phase 5: wallpaper-only path writes theme.conf.user (no
+        # vendor file edit).  See docs/design/override-mechanisms.md.
+        plan = [f"write {_THEME_CONF_USER_PATH}: set background={wallpaper}"]
         if self._accent_color is not None:
-            plan.append(f"edit {_THEME_CONF_PATH}: set color={self._accent_color}")
+            plan.append(
+                f"write {_THEME_CONF_USER_PATH}: set color={self._accent_color}"
+            )
         return plan
 
     def _write_conf(self, manifest: Manifest, wallpaper: Path) -> None:
         target = wallpaper.resolve()
-        if not _can_write(_THEME_CONF_PATH):
+        # Phase 5: write theme.conf.user (the sanctioned SDDM override
+        # mechanism) rather than editing the vendor theme.conf.  SDDM
+        # merges .user over the base config, so this is reversible by
+        # deleting theme.conf.user.
+        if not _can_write(_THEME_CONF_USER_PATH):
             raise BackendError(
-                f"{_THEME_CONF_PATH} is not writable",
+                f"{_THEME_CONF_USER_PATH.parent} is not writable",
                 hint=(
-                    "the SDDM theme file requires root. Re-run with sudo, e.g.\n"
-                    "  sudo trinity apply"
+                    "the SDDM theme directory requires root. Re-run with "
+                    "sudo, e.g.\n  sudo trinity apply"
                 ),
             )
-        text = _THEME_CONF_PATH.read_text(encoding="utf-8")
-        new_text = _set_key(text, _BG_LINE_RE, "background", str(target))
+        # theme.conf.user may not exist yet; build a fresh minimal
+        # config rather than patching the existing one, so a stale
+        # value from a previous run is replaced cleanly.
+        lines = [_DEFAULT_COMMENT, f"background={target}"]
         if self._accent_color is not None:
-            new_text = _set_key(new_text, _COLOR_LINE_RE, "color", self._accent_color)
+            lines.append(f"color={self._accent_color}")
+        new_text = "\n".join(lines) + "\n"
 
         from trinity.manifest import write_tracked
 
-        write_tracked(manifest, _THEME_CONF_PATH, new_text.encode("utf-8"), mode=0o644)
+        write_tracked(
+            manifest,
+            _THEME_CONF_USER_PATH,
+            new_text.encode("utf-8"),
+            mode=0o644,
+        )
 
 
 def _set_key(text: str, line_re: re.Pattern[str], key: str, value: str) -> str:
@@ -99,11 +120,16 @@ def login_surface_needs_root() -> bool:
     by the current user (i.e. the apply step for login will require root).
 
     Encapsulates the path-existence + writability + euid check so the
-    CLI doesn't need to import the private ``_THEME_CONF_PATH`` or
-    reimplement ``_can_write``.
+    CLI doesn't need to import the private ``_THEME_CONF_USER_PATH``
+    or reimplement ``_can_write``.
+
+    As of Phase 5 the writable target is ``theme.conf.user`` (next to
+    the vendor ``theme.conf``); the existence check still gates on the
+    vendor ``theme.conf`` because if that's missing, SDDM itself is
+    not installed and there's nothing to write.
     """
     if not _THEME_CONF_PATH.exists():
         return False
     if os.geteuid() == 0:
         return False
-    return not _can_write(_THEME_CONF_PATH)
+    return not _can_write(_THEME_CONF_USER_PATH)
