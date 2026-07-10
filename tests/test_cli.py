@@ -461,3 +461,31 @@ def test_trinity_version_via_run(tmp_path: Path) -> None:
     )
     assert proc.returncode == 0
     assert "trinity" in proc.stdout
+
+
+def test_sigterm_handler_exits_143_without_traceback() -> None:
+    """The SIGTERM handler installed by run() raises SystemExit(143)
+    so finally blocks unwind, and the process exits with 143 (128+15)
+    without a traceback on stderr."""
+    import subprocess
+    import sys
+
+    # Spawn a child that installs the handler, then self-sends SIGTERM
+    # after a brief sleep so the handler is in place.
+    code = (
+        "import os, signal, time\n"
+        "from trinity.cli import _install_sigterm_handler\n"
+        "_install_sigterm_handler()\n"
+        "os.kill(os.getpid(), signal.SIGTERM)\n"
+        "time.sleep(5)  # should never reach here\n"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert proc.returncode == 143
+    assert "Traceback" not in proc.stderr
+    # The structured log event should appear on stdout (structlog → stdout).
+    assert "sigterm_received" in proc.stdout

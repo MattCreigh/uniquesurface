@@ -673,13 +673,17 @@ def run() -> None:
     """Console-script entry point.
 
     Installs the user-facing excepthook (so unexpected errors render a
-    clean ``error: ...`` block instead of a traceback) and dispatches to
-    the Click group. Click's default ``standalone_mode=True`` catches
-    exceptions itself and converts them to ``SystemExit``, bypassing
-    ``sys.excepthook`` — so we run in non-standalone mode and handle
-    ``CLIError`` ourselves to render the graceful error block.
+    clean ``error: ...`` block instead of a traceback) and a SIGTERM
+    handler (so systemd's ``systemctl stop`` unwinds ``finally`` blocks
+    and context managers instead of killing the process mid-write).
+
+    Click's default ``standalone_mode=True`` catches exceptions itself
+    and converts them to ``SystemExit``, bypassing ``sys.excepthook`` —
+    so we run in non-standalone mode and handle ``CLIError`` ourselves
+    to render the graceful error block.
     """
     _install_excepthook()
+    _install_sigterm_handler()
     try:
         main(standalone_mode=False)
     except CLIError as exc:
@@ -692,6 +696,41 @@ def run() -> None:
         exc.show()
         sys.exit(exc.exit_code)
     # Anything else propagates and is rendered by the excepthook above.
+
+
+def _install_sigterm_handler() -> None:
+    """Install a SIGTERM handler that raises ``SystemExit(143)``.
+
+    Under systemd, ``SIGTERM`` is sent on ``systemctl --user stop`` (or
+    when ``TimeoutStopSec`` expires).  The default disposition kills the
+    process immediately (exit 143), which can interrupt a write between
+    the atomic file replace and the manifest append — leaving an untracked
+    write that breaks the undo guarantee.
+
+    By converting SIGTERM to ``SystemExit(143)`` we let Python's normal
+    unwinding run: ``finally`` blocks fire, context managers close files,
+    and the manifest stays consistent.  The exit code 143 (128 + 15)
+    matches what systemd expects for a SIGTERM-terminated process.
+
+    Only SIGTERM is handled here — SIGINT already works via
+    ``KeyboardInterrupt`` in the excepthook.  The handler is installed
+    only in ``run()`` (the console-script entry point), not on library
+    import, so importing ``trinity.cli`` in tests has no side effects.
+    """
+    import signal
+
+    def _on_sigterm(signum: int, frame: object) -> None:
+        _log.warning("sigterm_received", signal=signum)
+        raise SystemExit(143)
+
+    # Only install if we're in the main thread (signal handlers can only
+    # be installed from the main thread; tests that import cli.run don't
+    # always run in the main thread).
+    try:
+        signal.signal(signal.SIGTERM, _on_sigterm)
+    except (ValueError, OSError):
+        # Not in the main thread — skip (tests, embedded contexts).
+        pass
 
 
 if __name__ == "__main__":
