@@ -6,6 +6,23 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed (2026-07-10 deferred quality items)
+
+- Renamed `src/trinity/logging.py` to `src/trinity/logging_setup.py` to
+  avoid shadowing the stdlib `logging` module. All internal imports
+  updated. No compatibility shim — this is a 0.1.0 application, not a
+  library API.
+- Added `hypothesis` as a test dependency (PEP 735 group) and introduced
+  `tests/test_properties.py` with property-based tests for pure functions
+  (`_to_toml`/`_toml_literal` round-trip, `_replace_property_values`
+  idempotence, `strip_sentinels`/`normalize_managed_values` idempotence,
+  `_parse_color` `#RGB`↔`#RRGGBB` equivalence, `ManifestEntry`
+  JSON round-trip).
+- `trinity apply` now installs a SIGTERM handler in the `run()` entry
+  point so `finally` blocks and context managers unwind cleanly when
+  systemd sends SIGTERM, instead of the process dying mid-write. Logs a
+  structured `sigterm_received` event before shutting down.
+
 ### Changed (2026-07-10 quality sweep)
 
 - Packaging: PEP 639 SPDX license expression (`PolyForm-Noncommercial-1.0.0`)

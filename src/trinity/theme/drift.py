@@ -232,7 +232,7 @@ def handle_drift(name: str, vendor_path: Path) -> Path | None:
     if not vendor_path.is_file():
         return None
 
-    from trinity.logging import get_logger
+    from trinity.logging_setup import get_logger
 
     log = get_logger(__name__)
 

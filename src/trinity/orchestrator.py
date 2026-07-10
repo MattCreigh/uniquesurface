@@ -17,7 +17,7 @@ from trinity.backends.desktop import DesktopBackend
 from trinity.backends.lock import LockBackend
 from trinity.backends.login import LoginBackend
 from trinity.config import Config, expand_behaviour_paths
-from trinity.logging import get_logger
+from trinity.logging_setup import get_logger
 from trinity.manifest import Manifest, write_tracked
 from trinity.paths import invoking_user_uid_gid
 from trinity.providers import (

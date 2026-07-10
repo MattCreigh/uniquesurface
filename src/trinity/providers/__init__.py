@@ -148,7 +148,7 @@ def _register_entry_point_plugins(pm: pluggy.PluginManager) -> None:
     """
     from importlib.metadata import entry_points
 
-    from trinity.logging import get_logger
+    from trinity.logging_setup import get_logger
 
     log = get_logger(__name__)
     for ep in entry_points(group="trinity.providers"):

@@ -19,7 +19,7 @@ import subprocess
 from collections.abc import Sequence
 from pathlib import Path
 
-from trinity.logging import get_logger
+from trinity.logging_setup import get_logger
 
 _log = get_logger(__name__)
 

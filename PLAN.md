@@ -240,7 +240,7 @@ background_manager/
 │       ├── systemd/
 │       │   ├── __init__.py
 │       │   └── writer.py            (renders .service + .timer from inline templates)
-│       └── logging.py
+│       └── logging_setup.py
 ├── tests/
 │   ├── conftest.py
 │   ├── test_atomic.py

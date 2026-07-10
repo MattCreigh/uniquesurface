@@ -30,7 +30,7 @@ from pathlib import Path
 from trinity import paths as _paths
 from trinity.backends import _kconfig
 from trinity.backends.base import BackendError
-from trinity.logging import get_logger
+from trinity.logging_setup import get_logger
 from trinity.manifest import Manifest
 
 _log = get_logger(__name__)

@@ -155,7 +155,7 @@ class Login(_StrictModel):
             data = dict(data)
             for key in removed:
                 if key in data:
-                    from trinity.logging import get_logger
+                    from trinity.logging_setup import get_logger
 
                     get_logger(__name__).warning(
                         "config_ignored_key",

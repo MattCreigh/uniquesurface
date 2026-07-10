@@ -21,7 +21,7 @@ from types import TracebackType
 import click
 
 from trinity import __version__
-from trinity.logging import configure_logging, get_logger
+from trinity.logging_setup import configure_logging, get_logger
 
 _log = get_logger(__name__)
 
