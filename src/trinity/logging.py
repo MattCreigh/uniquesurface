@@ -37,6 +37,10 @@ def configure_logging(level: str = "INFO") -> None:
     )
 
 
-def get_logger(name: str | None = None) -> structlog.stdlib.BoundLogger:
-    """Return a bound structlog logger."""
+def get_logger(name: str | None = None) -> structlog.typing.FilteringBoundLogger:
+    """Return a bound structlog logger.
+
+    Typed as ``FilteringBoundLogger`` to match the ``wrapper_class``
+    installed by :func:`configure_logging`.
+    """
     return structlog.get_logger(name)  # type: ignore[no-any-return]

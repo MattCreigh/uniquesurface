@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import httpx
@@ -21,7 +22,7 @@ def test_config_init_writes_starter(
     runner = CliRunner()
     result = runner.invoke(main, ["config", "init"])
     assert result.exit_code == 0, result.output
-    config_path = Path(os_environ("XDG_CONFIG_HOME")) / "trinity" / "config.toml"
+    config_path = Path(os.environ["XDG_CONFIG_HOME"]) / "trinity" / "config.toml"
     assert config_path.exists()
     text = config_path.read_text()
     assert 'provider = "bing"' in text
@@ -196,6 +197,26 @@ user_dir = "{user_state}"
     assert "/* @trinity:start */" in qml_content
 
 
+def test_apply_invalid_config_is_clean_clierror(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A config that fails validation produces a CLIError with a hint,
+    not a raw pydantic traceback."""
+    from trinity.cli import CLIError
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg_config"))
+    cfg_dir = tmp_path / "xdg_config" / "trinity"
+    cfg_dir.mkdir(parents=True)
+    (cfg_dir / "config.toml").write_text(
+        "[surface]\nschema_version = 1\nbogus_key = true\n"
+        '[surface.source]\nprovider = "solid"\n'
+    )
+    runner = CliRunner()
+    result = runner.invoke(main, ["apply"], standalone_mode=False)
+    assert isinstance(result.exception, CLIError)
+    assert "invalid config" in str(result.exception)
+
+
 def test_status_runs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg_config"))
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "xdg_state"))
@@ -254,13 +275,107 @@ def test_qml_update_templates_writes_files(
     assert result.exit_code == 0, result.output
 
 
-def os_environ(name: str) -> str:
-    import os
+def test_pause_and_resume_report_systemctl_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Patch the re-exported names on ``trinity.systemd`` — the bindings
+    # the CLI actually calls — so no real systemctl is ever invoked.
+    monkeypatch.setattr("trinity.systemd.pause", lambda: (True, "paused"))
+    monkeypatch.setattr("trinity.systemd.resume", lambda: (True, "resumed"))
+    runner = CliRunner()
+    assert runner.invoke(main, ["pause"]).exit_code == 0
+    assert runner.invoke(main, ["resume"]).exit_code == 0
 
-    return os.environ[name]
+
+def test_pause_failure_exits_nonzero(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("trinity.systemd.pause", lambda: (False, "no such unit"))
+    result = CliRunner().invoke(main, ["pause"])
+    assert result.exit_code == 1
 
 
-# --- item 7: login_surface_needs_root helper + excepthook wrapper ---
+def test_uninstall_removes_units_from_real_unit_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression: uninstall must delete units from ~/.config/systemd/user
+    (where install writes them), not ~/.config/trinity/systemd/user."""
+    import subprocess
+
+    from trinity import paths
+
+    unit_dir = paths.config_dir().parent / "systemd" / "user"
+    unit_dir.mkdir(parents=True)
+    svc = unit_dir / "trinity-pull.service"
+    tmr = unit_dir / "trinity-pull.timer"
+    svc.write_text("[Unit]\n")
+    tmr.write_text("[Unit]\n")
+
+    calls: list[tuple[str, ...]] = []
+
+    def fake_systemctl(*args: str) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        return subprocess.CompletedProcess(args=(), returncode=0, stdout="", stderr="")
+
+    # Patch both the writer-internal binding (used by disable_and_stop)
+    # and the package re-export (used directly by the CLI).
+    monkeypatch.setattr("trinity.systemd.writer.systemctl", fake_systemctl)
+    monkeypatch.setattr("trinity.systemd.systemctl", fake_systemctl)
+    result = CliRunner().invoke(main, ["uninstall", "--yes"])
+    assert result.exit_code == 0, result.output
+    assert not svc.exists()
+    assert not tmr.exists()
+    assert ("daemon-reload",) in calls
+
+
+def test_provider_info_known_and_unknown() -> None:
+    runner = CliRunner()
+    ok = runner.invoke(main, ["provider", "info", "bing"])
+    assert ok.exit_code == 0
+    assert "Bing" in ok.output
+    missing = runner.invoke(main, ["provider", "info", "nope"])
+    assert missing.exit_code == 2
+
+
+def test_migrate_from_shell_no_legacy_setup(tmp_path: Path) -> None:
+    result = CliRunner().invoke(main, ["migrate-from-shell", "--dry-run"])
+    assert result.exit_code == 0
+    assert "No existing shell-based" in result.output
+
+
+def test_config_show_prints_json(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    runner = CliRunner()
+    runner.invoke(main, ["config", "init"])
+    result = runner.invoke(main, ["config", "show"])
+    assert result.exit_code == 0
+    assert '"provider": "bing"' in result.output
+
+
+def test_config_validate_reports_invalid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    cfg_dir = tmp_path / "trinity"
+    cfg_dir.mkdir(parents=True)
+    (cfg_dir / "config.toml").write_text("[surface]\nbogus = 1\n")
+    result = CliRunner().invoke(main, ["config", "validate"])
+    assert result.exit_code == 1
+    assert "invalid" in result.output
+
+
+def test_config_init_refuses_overwrite_without_force(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    runner = CliRunner()
+    assert runner.invoke(main, ["config", "init"]).exit_code == 0
+    again = runner.invoke(main, ["config", "init"])
+    assert again.exit_code == 2
+    assert "already exists" in again.output
+
+
+# --- login_surface_needs_root helper + excepthook wrapper ---
 
 
 def test_login_surface_needs_root_false_when_not_present(

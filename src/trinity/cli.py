@@ -1,4 +1,14 @@
-"""Click CLI entry point for trinity."""
+"""Click CLI entry point for trinity.
+
+Exit-code convention (kept deliberately small):
+
+- ``0`` — success.
+- ``1`` — operation failed (network error, backend failure, invalid
+  config content, health-check failure from ``doctor``).
+- ``2`` — precondition/usage problem the user must resolve first
+  (missing config, refusing to overwrite an existing file, unknown
+  provider name). Matches Click's own usage-error exit code.
+"""
 
 from __future__ import annotations
 
@@ -6,6 +16,7 @@ import os
 import sys
 import traceback
 from pathlib import Path
+from types import TracebackType
 
 import click
 
@@ -63,14 +74,18 @@ def _install_excepthook() -> None:
     The user can opt back into the traceback with ``TRINITY_DEBUG=1``.
     """
 
-    def excepthook(exc_type, exc_value, exc_tb):  # type: ignore[no-untyped-def]
+    def excepthook(
+        exc_type: type[BaseException],
+        exc_value: BaseException,
+        exc_tb: TracebackType | None,
+    ) -> None:
         if os.environ.get("TRINITY_DEBUG"):
             traceback.print_exception(exc_type, exc_value, exc_tb)
             return
         if issubclass(exc_type, KeyboardInterrupt):
             click.echo("aborted.", err=True)
             return
-        if issubclass(exc_type, CLIError):
+        if isinstance(exc_value, CLIError):
             click.echo(_format_error(str(exc_value), exc_value.hint), err=True)
             sys.exit(exc_value.status)
         click.echo(
@@ -118,7 +133,15 @@ def apply(dry_run: bool, config_path: Path | None, adopt_drift: bool) -> None:
             status=2,
         )
 
-    cfg = load_config(config_path)
+    from pydantic import ValidationError
+
+    try:
+        cfg = load_config(config_path)
+    except (ValidationError, ValueError, OSError) as exc:
+        raise CLIError(
+            f"invalid config {config_path or paths.config_file()}: {exc}",
+            hint="run `trinity config validate` after fixing the file",
+        ) from exc
 
     from trinity.theme.font_install import is_installed
 
@@ -212,6 +235,9 @@ def status() -> None:
         try:
             font_family = _load_config(None).surface.fonts.family
         except Exception:
+            # Best-effort display: an unparseable config must not stop
+            # `status` from reporting everything else; `config validate`
+            # is the command that reports the parse error itself.
             pass
     click.echo(
         f"font '{font_family}' resolves via fontconfig: "
@@ -273,7 +299,7 @@ def config_validate(config_path: Path | None) -> None:
 
     try:
         load_config(config_path)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         click.echo(f"invalid: {exc}", err=True)
         sys.exit(1)
     click.echo("ok")
@@ -419,6 +445,8 @@ def doctor() -> None:
 
             font_family = _load_config(None).surface.fonts.family
         except Exception:
+            # Best-effort: doctor reports the config's presence above;
+            # a parse failure falls back to checking the default font.
             pass
     if is_installed(font_family):
         click.echo(f"[ok]   font '{font_family}' resolves via fontconfig")
@@ -551,7 +579,10 @@ def install(yes: bool) -> None:
             click.echo(f"    installed to {result.installed_to}")
             if result.ran_fc_cache:
                 click.echo("    ran fc-cache -f")
-        except FileNotFoundError as exc:
+        except OSError as exc:
+            # FileNotFoundError (no bundled font) or PermissionError
+            # (target dir not writable) — both are non-fatal: the login
+            # screen keeps the system default font.
             click.echo(f"    font install failed: {exc}", err=True)
 
     click.echo("==> Creating shared wallpaper directory")
@@ -588,12 +619,16 @@ def uninstall(yes: bool) -> None:
     else:
         click.echo(f"    systemd disable failed: {msg}", err=True)
 
-    svc = paths.config_dir() / "systemd" / "user" / "trinity-pull.service"
-    tmr = paths.config_dir() / "systemd" / "user" / "trinity-pull.timer"
-    for p in (svc, tmr):
+    unit_dir = paths.config_dir().parent / "systemd" / "user"
+    removed = False
+    for p in (unit_dir / "trinity-pull.service", unit_dir / "trinity-pull.timer"):
         if p.exists():
             p.unlink()
+            removed = True
             click.echo(f"    removed {p}")
+    if removed:
+        # Forget the deleted units so systemd doesn't keep stale state.
+        systemd.systemctl("daemon-reload")
 
 
 @main.command()
@@ -656,11 +691,7 @@ def run() -> None:
     except click.ClickException as exc:
         exc.show()
         sys.exit(exc.exit_code)
-    except SystemExit:
-        raise
-    except Exception:
-        # Re-raise so sys.excepthook (installed above) handles it.
-        raise
+    # Anything else propagates and is rendered by the excepthook above.
 
 
 if __name__ == "__main__":

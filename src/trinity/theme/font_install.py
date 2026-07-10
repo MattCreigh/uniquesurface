@@ -15,7 +15,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 _SYSTEM_TARGET = Path("/usr/local/share/fonts/trinity")
-_USER_TARGET = Path("~/.local/share/fonts").expanduser()
+
+
+def _user_target() -> Path:
+    """User-local fonts dir, expanded per-call so ``HOME`` changes
+    (sudo, test isolation) are honoured."""
+    return Path("~/.local/share/fonts").expanduser()
 
 
 @dataclass(frozen=True)
@@ -84,7 +89,7 @@ def install(
         target_dir = _SYSTEM_TARGET
         system_wide = True
     else:
-        target_dir = _USER_TARGET
+        target_dir = _user_target()
         system_wide = False
 
     target_dir.mkdir(parents=True, exist_ok=True)

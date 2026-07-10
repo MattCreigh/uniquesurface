@@ -7,8 +7,8 @@ We shell out only for files Plasma itself writes (``appletsrc``,
 All subprocess calls support a ``dry_run`` flag so the planner can
 preview what would be written without touching the system. They also
 all carry an explicit ``timeout`` (default :data:`_DEFAULT_TIMEOUT`)
-so a frozen ``kwriteconfig6``/``qdbus6``/``systemctl`` cannot hang the
-whole ``trinity apply`` past the systemd ``TimeoutStopSec``.
+so a frozen ``kwriteconfig6``/``qdbus6`` cannot hang ``trinity apply``
+past the service unit's ``TimeoutStartSec=120`` kill timer.
 """
 
 from __future__ import annotations
@@ -24,9 +24,9 @@ from trinity.logging import get_logger
 _log = get_logger(__name__)
 
 # Default per-call timeout for short shell-outs to system tools
-# (``kwriteconfig6``, ``qdbus6``, ``systemctl is-active``). Long enough
-# for a slow first call, short enough to surface hangs within the
-# systemd ``TimeoutStopSec=90s`` budget.
+# (``kwriteconfig6``, ``qdbus6``). Long enough for a slow first call,
+# short enough to surface hangs well inside the service unit's
+# ``TimeoutStartSec=120`` budget.
 _DEFAULT_TIMEOUT = 10.0
 
 
@@ -121,7 +121,7 @@ def _run_as_invoking_user(argv: list[str]) -> list[str]:
     if os.geteuid() == 0 and sudo_user and sudo_uid:
         runtime = f"/run/user/{sudo_uid}"
         return [
-            "sudo",
+            ensure_tool("sudo"),
             "-u",
             sudo_user,
             "env",
@@ -139,15 +139,20 @@ def qdbus_call(
     method: str,
     args: Sequence[str] = (),
     dry_run: bool = False,
+    unavailable_hint: str = (
+        "Plasma is not running; wallpaper will refresh on next start."
+    ),
 ) -> list[str]:
-    """Call ``qdbus6`` to invoke a method.
+    """Call ``qdbus6`` to invoke a D-Bus method, soft-failing.
 
     Returns the argv for dry-run inspection.
 
     Plasma is not always running (e.g. on a headless TTY or right after
     login). We treat a missing service as a soft success: the config
     files are updated, and Plasma will pick the wallpaper up on next
-    start. We log at debug level so the user doesn't see noise.
+    start. Missing services log at debug level (expected noise); any
+    other non-zero exit logs a warning so a real breakage is visible in
+    the journal.
     """
     argv: list[str] = _run_as_invoking_user(
         [ensure_tool("qdbus6"), service, path, method, *args]
@@ -162,12 +167,12 @@ def qdbus_call(
         stderr = (proc.stderr or "").strip()
         if "does not exist" in stderr or "not found" in stderr.lower():
             _log.debug(
-                "plasma_service_unavailable",
+                "dbus_service_unavailable",
                 service=service,
-                hint="Plasma is not running; wallpaper will refresh on next start.",
+                hint=unavailable_hint,
             )
         else:
-            _log.debug(
+            _log.warning(
                 "qdbus_call_failed",
                 service=service,
                 path=path,
@@ -222,38 +227,16 @@ def evaluate_wallpaper_script(
         f"d.writeConfig('Image','{js_image}');"
         "}"
     )
-    argv: list[str] = _run_as_invoking_user(
-        [
-            ensure_tool("qdbus6"),
-            _PLASMASHELL_SERVICE,
-            _PLASMASHELL_PATH,
-            f"{_PLASMASHELL_IFACE}.evaluateScript",
-            script,
-        ]
+    return qdbus_call(
+        service=_PLASMASHELL_SERVICE,
+        path=_PLASMASHELL_PATH,
+        method=f"{_PLASMASHELL_IFACE}.evaluateScript",
+        args=(script,),
+        dry_run=dry_run,
+        unavailable_hint=(
+            "Plasma is not running; desktop wallpaper will refresh on next start."
+        ),
     )
-    if dry_run:
-        return argv
-    _log.info("evaluate_wallpaper_script", argv=argv)
-    proc = subprocess.run(
-        argv, check=False, capture_output=True, text=True, timeout=_DEFAULT_TIMEOUT
-    )
-    if proc.returncode != 0:
-        stderr = (proc.stderr or "").strip()
-        if "does not exist" in stderr or "not found" in stderr.lower():
-            _log.debug(
-                "plasmashell_unavailable",
-                hint=(
-                    "Plasma is not running; "
-                    "desktop wallpaper will refresh on next start."
-                ),
-            )
-        else:
-            _log.warning(
-                "evaluate_wallpaper_script_failed",
-                returncode=proc.returncode,
-                stderr=stderr,
-            )
-    return argv
 
 
 def reload_lockscreen_config(*, dry_run: bool = False) -> list[str]:
@@ -265,34 +248,12 @@ def reload_lockscreen_config(*, dry_run: bool = False) -> list[str]:
     wallpaper plugin so the *next* lock uses the new image, without
     needing to lock+unlock. Best-effort: a no-op if the service is absent.
     """
-    argv: list[str] = _run_as_invoking_user(
-        [
-            ensure_tool("qdbus6"),
-            "org.freedesktop.ScreenSaver",
-            "/org/freedesktop/ScreenSaver",
-            "org.kde.screensaver.configure",
-        ]
+    return qdbus_call(
+        service="org.freedesktop.ScreenSaver",
+        path="/org/freedesktop/ScreenSaver",
+        method="org.kde.screensaver.configure",
+        dry_run=dry_run,
+        unavailable_hint=(
+            "ScreenSaver service not running; lock screen will reload on next lock."
+        ),
     )
-    if dry_run:
-        return argv
-    _log.info("reload_lockscreen_config", argv=argv)
-    proc = subprocess.run(
-        argv, check=False, capture_output=True, text=True, timeout=_DEFAULT_TIMEOUT
-    )
-    if proc.returncode != 0:
-        stderr = (proc.stderr or "").strip()
-        if "does not exist" in stderr or "not found" in stderr.lower():
-            _log.debug(
-                "screensaver_service_unavailable",
-                hint=(
-                    "ScreenSaver service not running; "
-                    "lock screen will reload on next lock."
-                ),
-            )
-        else:
-            _log.warning(
-                "reload_lockscreen_config_failed",
-                returncode=proc.returncode,
-                stderr=stderr,
-            )
-    return argv

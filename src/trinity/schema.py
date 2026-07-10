@@ -37,12 +37,13 @@ _FONT_WEIGHT_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Qt date/time format tokens. We allow the common format characters and
-# literal text/punctuation. Reject control chars and quotes (the value is
-# written into a QML string literal, which is escaped separately, but we
-# reject quotes here to surface typos early rather than silently produce
-# a broken clock).
-_CLOCK_FORMAT_RE = re.compile(r"^[A-Za-z0-9 :/\-.,'apApMhHmszyZ ]{0,64}$")
+# Qt date/time format tokens: letters and digits for the format
+# characters, common punctuation for separators, and single quotes for
+# Qt literal-text sections ('...'). Double quotes, control characters,
+# and the empty string are rejected — the value lands inside a QML
+# double-quoted string literal, and rejecting early surfaces typos
+# instead of silently producing a broken clock.
+_CLOCK_FORMAT_RE = re.compile(r"^[A-Za-z0-9 :/\-.,']{1,64}$")
 
 
 class _StrictModel(BaseModel):
@@ -149,7 +150,9 @@ class Login(_StrictModel):
     @classmethod
     def _strip_removed_keys(cls, data: Any) -> Any:
         removed = ("show_user_list",)
-        if isinstance(data, dict):
+        if isinstance(data, dict) and any(key in data for key in removed):
+            # Copy: never mutate the caller's dict (it may be reused).
+            data = dict(data)
             for key in removed:
                 if key in data:
                     from trinity.logging import get_logger
@@ -160,7 +163,7 @@ class Login(_StrictModel):
                         key=key,
                         hint="removed: SDDM computes user-list visibility internally",
                     )
-                    data.pop(key)
+                    del data[key]
         return data
 
 

@@ -29,7 +29,7 @@ _DEFAULT_OPTIONS: dict[str, Any] = {
 _HEX_RE = re.compile(r"^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
 
 # Cap generated image dimensions to avoid unbounded memory allocation from
-# a malicious or mistaken config. 8K (7680×4320) is the largest common
+# a malicious or mistaken config. 8K (7680x4320) is the largest common
 # desktop resolution and a generous ceiling.
 _MAX_DIM = 7680
 
@@ -76,9 +76,21 @@ def _gradient_image(
 
 
 def fetch(options: dict[str, Any]) -> FetchedImage:
+    """Generate a solid-colour or gradient JPEG.
+
+    Raises :class:`ProviderError` for invalid colours or dimensions.
+    """
     opts = {**_DEFAULT_OPTIONS, **options}
-    width = int(opts["width"])
-    height = int(opts["height"])
+    try:
+        width = int(opts["width"])
+        height = int(opts["height"])
+        quality = int(opts["quality"])
+    except (TypeError, ValueError) as exc:
+        raise ProviderError(
+            f"solid provider: 'width', 'height' and 'quality' must be integers "
+            f"(got width={opts['width']!r}, height={opts['height']!r}, "
+            f"quality={opts['quality']!r})"
+        ) from exc
     if width <= 0 or height <= 0:
         raise ProviderError(f"invalid dimensions: {width}x{height}")
     if width > _MAX_DIM or height > _MAX_DIM:
@@ -93,7 +105,7 @@ def fetch(options: dict[str, Any]) -> FetchedImage:
     else:
         img = Image.new("RGB", (width, height), color)
 
-    quality = max(1, min(100, int(opts["quality"])))
+    quality = max(1, min(100, quality))
     buf = io.BytesIO()
     img.save(buf, format="JPEG", quality=quality)
     return FetchedImage(

@@ -23,7 +23,7 @@ import httpx
 from trinity.providers import FetchedImage, ProviderError
 
 _METADATA_URL = "https://www.bing.com/HPImageArchive.aspx"
-# Maximum image download size. Bing POTD JPEGs are ~1–2 MiB; 50 MiB is a
+# Maximum image download size. Bing POTD JPEGs are ~1-2 MiB; 50 MiB is a
 # generous ceiling that still prevents an unbounded/malicious response
 # from exhausting memory.
 _MAX_IMAGE_BYTES = 50 * 1024 * 1024
@@ -36,12 +36,25 @@ _DEFAULT_OPTIONS: dict[str, Any] = {
 
 
 def fetch(options: dict[str, Any]) -> FetchedImage:
+    """Fetch today's Bing Picture of the Day as JPEG bytes.
+
+    Raises :class:`ProviderError` for anything that goes wrong: invalid
+    options, network failures, non-2xx responses, unexpected metadata
+    shapes, and downloads exceeding the size cap.
+    """
     opts = {**_DEFAULT_OPTIONS, **options}
-    timeout = float(opts["timeout"])
+    try:
+        timeout = float(opts["timeout"])
+        index = int(opts["index"])
+    except (TypeError, ValueError) as exc:
+        raise ProviderError(
+            f"bing provider: 'timeout' and 'index' must be numeric "
+            f"(got timeout={opts['timeout']!r}, index={opts['index']!r})"
+        ) from exc
 
     params = {
         "format": "js",
-        "idx": str(int(opts["index"])),
+        "idx": str(index),
         "n": "1",
         "mkt": str(opts["mkt"]),
     }
@@ -53,6 +66,22 @@ def fetch(options: dict[str, Any]) -> FetchedImage:
         )
     }
 
+    try:
+        return _fetch_image(timeout=timeout, headers=headers, params=params, opts=opts)
+    except httpx.HTTPError as exc:
+        # Covers timeouts, DNS/connection failures, and 4xx/5xx statuses.
+        # Wrapped so the CLI reports a clean provider failure instead of
+        # an "unexpected error" traceback for a transient network problem.
+        raise ProviderError(f"bing provider: HTTP request failed: {exc}") from exc
+
+
+def _fetch_image(
+    *,
+    timeout: float,
+    headers: dict[str, str],
+    params: dict[str, str],
+    opts: dict[str, Any],
+) -> FetchedImage:
     with httpx.Client(
         timeout=timeout, headers=headers, follow_redirects=True
     ) as client:
@@ -60,9 +89,14 @@ def fetch(options: dict[str, Any]) -> FetchedImage:
         meta_resp.raise_for_status()
         try:
             meta = meta_resp.json()
+        except ValueError as exc:
+            raise ProviderError(
+                f"Bing metadata response is not valid JSON: {exc}"
+            ) from exc
+        try:
             image_meta = meta["images"][0]
             rel_url = image_meta["url"]
-        except (ValueError, KeyError, IndexError, TypeError) as exc:
+        except (KeyError, IndexError, TypeError) as exc:
             raise ProviderError(f"unexpected Bing metadata shape: {meta!r}") from exc
 
         if not isinstance(rel_url, str) or not rel_url.startswith("/"):

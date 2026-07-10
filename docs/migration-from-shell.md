@@ -14,10 +14,10 @@ The legacy setup uses:
 
 ## Migration steps
 
-1. **Install the package** (from this repo):
+1. **Install the CLI** (from a clone of this repo):
 
    ```sh
-   uv tool install /home/matt/Projects/background_manager
+   uv tool install /path/to/trinity
    ```
 
 2. **Generate a starter config** (additive only; does not delete
@@ -31,7 +31,7 @@ The legacy setup uses:
    This detects `bing-potd.sh` and the existing systemd timer, and
    writes `~/.config/trinity/config.toml`.
 
-3. **Install the package** (this is the step that touches root-owned
+3. **Run the system install** (this is the step that touches root-owned
    paths):
 
    ```sh

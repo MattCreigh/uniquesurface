@@ -24,6 +24,27 @@ from pathlib import Path
 from typing import IO
 
 
+def _fsync_dir(directory: Path) -> None:
+    """Best-effort fsync of a directory so a rename survives a power cut.
+
+    ``os.replace`` makes the *file* durable only once its directory entry
+    is also flushed. Failures are ignored: some filesystems (and some
+    container mounts) do not support opening directories for fsync, and
+    losing the sync there only re-exposes the pre-rename state, which is
+    still a consistent file.
+    """
+    try:
+        fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+
+
 def _atomic_move(tmp_path: Path, dest: Path, mode: int | None = None) -> None:
     """Move ``tmp_path`` onto ``dest`` atomically if possible.
 
@@ -46,6 +67,7 @@ def _atomic_move(tmp_path: Path, dest: Path, mode: int | None = None) -> None:
         os.replace(tmp_path, dest)
         if mode is not None:
             os.chmod(dest, mode)
+        _fsync_dir(dest.parent)
         return
     except OSError as exc:
         if exc.errno != errno.EXDEV:
@@ -77,6 +99,7 @@ def _atomic_move(tmp_path: Path, dest: Path, mode: int | None = None) -> None:
         os.replace(sibling_tmp, dest)
         if mode is not None:
             os.chmod(dest, mode)
+        _fsync_dir(dest.parent)
     finally:
         try:
             sibling_tmp.unlink()
@@ -146,8 +169,9 @@ def atomic_write_bytes(
             f.write(data)
             f.flush()
             os.fsync(f.fileno())
-        if mode is not None:
-            os.chmod(tmp_path, mode)
+        # The destination mode is applied by _atomic_move *after* the
+        # rename; chmodding the temp file here would only widen its
+        # permissions while it still sits in the shared temp directory.
         _atomic_move(tmp_path, dest, mode=mode)
     except Exception:
         try:
@@ -194,8 +218,6 @@ def atomic_replace_with(
             writer(f)
             f.flush()
             os.fsync(f.fileno())
-        if mode is not None:
-            os.chmod(tmp_path, mode)
         _atomic_move(tmp_path, dest, mode=mode)
     except Exception:
         try:

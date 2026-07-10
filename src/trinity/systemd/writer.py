@@ -11,8 +11,8 @@ from typing import Any
 from trinity import paths
 
 # Default timeout for ``systemctl --user`` calls. Long enough for a slow
-# first D-Bus call, short enough to surface hangs inside the systemd
-# ``TimeoutStopSec=90s`` budget for the ``Type=oneshot`` service.
+# first D-Bus call, short enough that a hung user manager surfaces as an
+# error instead of freezing the CLI.
 _SYSTEMCTL_TIMEOUT = 10.0
 
 _SERVICE_TEMPLATE = """\
@@ -44,6 +44,17 @@ ReadWritePaths=%h/.config/trinity %h/.local/state/trinity /usr/local/share/wallp
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 SystemCallFilter=@system-service
 SystemCallFilter=~@privileged @resources
+SystemCallArchitectures=native
+RestrictRealtime=true
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+LockPersonality=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+UMask=0022
 """
 
 # Deterministic daily schedule: noon local time, with a small jitter so a
@@ -118,7 +129,7 @@ def install(
     # only needs a valid CWD for relative-path resolution; the home dir
     # is the safest default and matches what systemd user services
     # inherit anyway.
-    home_dir = working_dir or str(paths._get_user_home() or Path.home())
+    home_dir = working_dir or str(paths.invoking_user_home() or Path.home())
 
     svc_text = render_service({"trinity_bin": bin_path, "home_dir": home_dir})
     tmr_text = render_timer()
@@ -136,15 +147,34 @@ def install(
 def systemctl(*args: str) -> subprocess.CompletedProcess[str]:
     """Run ``systemctl --user`` with the given arguments.
 
-    Caller checks return code / stderr as needed.
+    Caller checks return code / stderr as needed. If ``systemctl`` (or
+    ``sudo`` when dropping privileges) is not on PATH — e.g. a container
+    or a non-systemd distribution — a synthetic failed result is
+    returned instead of raising, so ``status``/``doctor`` keep working.
     """
-    cmd = ["systemctl", "--user", *args]
+    systemctl_bin = shutil.which("systemctl")
+    if systemctl_bin is None:
+        return subprocess.CompletedProcess(
+            args=("systemctl", "--user", *args),
+            returncode=127,
+            stdout="",
+            stderr="systemctl not found on PATH",
+        )
+    cmd = [systemctl_bin, "--user", *args]
     sudo_user = os.environ.get("SUDO_USER")
     sudo_uid = os.environ.get("SUDO_UID")
     if sudo_user and sudo_uid and os.geteuid() == 0:
+        sudo_bin = shutil.which("sudo")
+        if sudo_bin is None:
+            return subprocess.CompletedProcess(
+                args=tuple(cmd),
+                returncode=127,
+                stdout="",
+                stderr="sudo not found on PATH; cannot drop to the invoking user",
+            )
         runtime = f"/run/user/{sudo_uid}"
         cmd = [
-            "sudo",
+            sudo_bin,
             "-u",
             sudo_user,
             "env",

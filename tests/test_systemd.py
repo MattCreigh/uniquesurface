@@ -74,6 +74,28 @@ def test_service_unit_never_passes_adopt_drift(tmp_path: Path) -> None:
     assert "ExecStart=/bin/true apply" in text
 
 
+def test_systemctl_missing_binary_returns_failed_result(monkeypatch) -> None:
+    """On a host without systemd (container, other init), systemctl()
+    returns a synthetic failure instead of raising FileNotFoundError, so
+    `status`/`doctor` keep working."""
+    monkeypatch.setattr(writer.shutil, "which", lambda _name: None)
+    res = writer.systemctl("is-enabled", "trinity-pull.timer")
+    assert res.returncode == 127
+    assert "not found" in res.stderr
+
+
+def test_render_service_includes_extended_hardening() -> None:
+    text = systemd.render_service({"trinity_bin": "/bin/x", "home_dir": "/home/x"})
+    for directive in (
+        "SystemCallArchitectures=native",
+        "RestrictRealtime=true",
+        "LockPersonality=true",
+        "ProtectKernelTunables=true",
+        "UMask=0022",
+    ):
+        assert directive in text, directive
+
+
 def test_pause_uses_runtime_mask() -> None:
     with patch.object(writer, "systemctl", return_value=_fake_process()) as mock:
         ok, msg = writer.pause()

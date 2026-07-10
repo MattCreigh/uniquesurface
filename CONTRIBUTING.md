@@ -10,18 +10,19 @@ trinity uses [uv](https://docs.astral.sh/uv/) for dependency management.
 ```sh
 git clone https://github.com/MattCreigh/trinity.git
 cd trinity
-uv sync --extra test    # create venv + install dev + test deps
+uv sync --group test    # create venv + install dev + test deps
 ```
 
 ## Quality gates
 
-All three must pass before a PR can be merged:
+All four must pass before a PR can be merged (CI enforces them on every
+push and pull request):
 
 ```sh
 uv run ruff check src tests          # linting
-uv run ruff format --check src tests # formatting (use --fix to auto-fix)
-uv run mypy src                       # type checking (strict mode)
-uv run pytest -q                      # tests (~1s, 114 tests)
+uv run ruff format --check src tests # formatting
+uv run mypy src                      # type checking (strict mode)
+uv run pytest -q                     # tests
 ```
 
 ## Code style
@@ -48,8 +49,25 @@ uv run pytest -q                      # tests (~1s, 114 tests)
 - Use `respx` for HTTP mocking, `monkeypatch` for subprocess mocking.
 - Integration tests (requiring a real Plasma session) should be marked
   `@pytest.mark.integration` and skipped when no display is available.
-- Target: 80%+ coverage. Run `uv run pytest --cov=trinity --cov-report=term-missing`
-  to check.
+- Coverage floor: 75% (enforced via `[tool.coverage.report] fail_under`
+  when running with `--cov`); target 80%+. Run
+  `uv run pytest --cov --cov-report=term-missing` to check. New code
+  should cover its error paths, not just the success path.
+
+## Pull requests
+
+- Branch from `main`; keep PRs focused on one change.
+- All CI checks (lint, format, types, tests on every supported Python)
+  must be green before merge — `main` is a protected branch.
+- Update `CHANGELOG.md` under `[Unreleased]` for user-visible changes.
+
+## Releases
+
+1. Update the version in `src/trinity/__init__.py` (the single source of
+   truth — `pyproject.toml` reads it via `[tool.hatch.version]`).
+2. Move the `[Unreleased]` CHANGELOG section under the new version.
+3. Tag `vX.Y.Z` and push the tag; build artefacts with `uv build`.
+   (The project is not published to PyPI; install from the repository.)
 
 ## Architecture overview
 

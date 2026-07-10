@@ -6,6 +6,44 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed (2026-07-10 quality sweep)
+
+- Packaging: PEP 639 SPDX license expression (`PolyForm-Noncommercial-1.0.0`)
+  with `license-files`; version is now single-sourced from
+  `trinity.__version__` via hatch; `py.typed` marker shipped; sdist now
+  includes `LICENSE`, `CHANGELOG.md`, `CONTRIBUTING.md`, and `docs/`;
+  test dependencies moved from a published `test` extra to a PEP 735
+  dependency group (`uv sync --group test`); unused `syrupy` test
+  dependency removed.
+- Bing provider wraps network failures (timeouts, DNS errors, non-2xx
+  responses) in `ProviderError`, and both `bing` and `solid` validate
+  numeric options instead of crashing on bad types. Fixed a latent
+  `NameError` when Bing returns non-JSON metadata.
+- `file` provider: the allow-list check now runs before the existence
+  check (no longer discloses whether paths outside the allowed roots
+  exist), and the allowed roots honour `HOME` changes at call time.
+- `trinity uninstall` now removes the unit files from the correct
+  directory (`~/.config/systemd/user/`; previously it looked in
+  `~/.config/trinity/systemd/user/` and never deleted them) and runs
+  `systemctl --user daemon-reload` afterwards.
+- Atomic writes fsync the destination directory after rename for full
+  crash consistency; the manifest append loops on short writes and
+  opens the log with `O_CLOEXEC`.
+- `systemctl` shell-outs return a clean failure instead of raising when
+  `systemctl`/`sudo` is missing (non-systemd hosts).
+- Systemd service template gained further hardening directives
+  (`SystemCallArchitectures=native`, `RestrictRealtime`,
+  `RestrictNamespaces`, `RestrictSUIDSGID`, `LockPersonality`,
+  `ProtectKernelTunables/Modules`, `ProtectControlGroups`,
+  `ProtectClock`, `ProtectHostname`, `UMask=0022`).
+- `trinity apply` reports an invalid config as a clean `error:` block
+  with a hint instead of an unexpected-error traceback.
+- Removed dead code: `manifest.truncate`, `paths.last_wallpaper`,
+  `paths.last_config_copy`, and the pre-3.10 `entry_points` fallback.
+- CI: Python 3.12/3.13 matrix, locked installs (`uv sync --locked`),
+  coverage floor enforcement, wheel/sdist build artefacts, Dependabot
+  for GitHub Actions and uv dependencies.
+
 ### Added
 
 - Initial implementation of `trinity` CLI.
@@ -89,15 +127,14 @@ adheres to [Semantic Versioning](https://semver.org/).
   the provider's original suggestion.
 - The fadeoutTimer interval matcher tolerates other properties between
   `id: fadeoutTimer` and `interval:`.
-- **Display manager auto-reload:** when `sudo trinity apply` actually
-  changes the SDDM/plasmalogin `theme.conf`, the display manager is
-  automatically restarted so the new login wallpaper is visible on the
-  next greeter launch. Previously the user had to do a full manual
-  logout because "switch user" reuses the existing greeter, which
-  never re-reads `theme.conf`. The restart only happens when running
-  as root and only when the login backend actually wrote a new config
-  (so user-mode applies that didn't touch the login surface are left
-  alone).
+- **Display manager restart hint:** when `trinity apply` actually
+  changes the SDDM/plasmalogin `theme.conf`, the plan output names the
+  active display manager unit and prints the exact
+  `sudo systemctl restart <dm>` command needed to make the new login
+  wallpaper visible ("switch user" reuses the existing greeter, which
+  never re-reads `theme.conf`). The display manager is **never**
+  restarted automatically — that would terminate the user's running
+  session.
 - **Test isolation:** `apply_to_surfaces(backends=[])` now truly skips
   all backends (previously the falsy empty list fell through to
   `default_backends()`, causing integration tests to invoke the real

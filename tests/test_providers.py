@@ -163,6 +163,17 @@ def test_solid_rejects_zero_dimensions() -> None:
         solid.fetch({"color": "#000000", "width": 0, "height": 0})
 
 
+def test_solid_rejects_non_numeric_dimensions() -> None:
+    """Non-numeric options raise ProviderError, not a bare ValueError."""
+    with pytest.raises(ProviderError, match="must be integers"):
+        solid.fetch({"color": "#000000", "width": "wide", "height": 8})
+
+
+def test_solid_rejects_oversize_dimensions() -> None:
+    with pytest.raises(ProviderError, match="cap"):
+        solid.fetch({"color": "#000000", "width": 100_000, "height": 8})
+
+
 # --- file --------------------------------------------------------------
 
 
@@ -199,6 +210,32 @@ def test_file_provider_expands_home(
     monkeypatch.setenv("TRINITY_SHARED_DIR", str(tmp_path))
     img = file.fetch({"path": "~/wp.jpg"})
     assert img.content_type == "image/jpeg"
+
+
+def test_file_provider_rejects_oversize_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A file over the size cap is refused before being read into memory."""
+    monkeypatch.setenv("TRINITY_SHARED_DIR", str(tmp_path))
+    target = tmp_path / "huge.jpg"
+    target.write_bytes(b"\xff\xd8\xff")
+    monkeypatch.setattr(file, "_MAX_LOCAL_BYTES", 2)
+    with pytest.raises(ProviderError, match="local-file cap"):
+        file.fetch({"path": str(target)})
+
+
+def test_file_provider_error_does_not_reveal_outside_existence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The allow-list rejection fires before the existence check, so the
+    message is identical whether or not the outside path exists."""
+    monkeypatch.setenv("TRINITY_SHARED_DIR", str(tmp_path / "elsewhere"))
+    existing = tmp_path / "real.jpg"
+    existing.write_bytes(b"\xff\xd8\xff")
+    with pytest.raises(ProviderError, match="not under an allowed root"):
+        file.fetch({"path": str(existing)})
+    with pytest.raises(ProviderError, match="not under an allowed root"):
+        file.fetch({"path": str(tmp_path / "ghost.jpg")})
 
 
 def test_file_provider_rejects_path_outside_allowed_roots(
@@ -277,6 +314,37 @@ def test_bing_rejects_unexpected_metadata(respx_mock: respx.router.MockRouter) -
     )
     with pytest.raises(ProviderError):
         bing.fetch({})
+
+
+def test_bing_wraps_network_errors(respx_mock: respx.router.MockRouter) -> None:
+    """Connection failures surface as ProviderError, not raw httpx errors."""
+    respx_mock.get(bing._METADATA_URL).mock(
+        side_effect=httpx.ConnectError("connection refused")
+    )
+    with pytest.raises(ProviderError, match="HTTP request failed"):
+        bing.fetch({})
+
+
+def test_bing_wraps_http_status_errors(respx_mock: respx.router.MockRouter) -> None:
+    """A 5xx from Bing surfaces as ProviderError."""
+    respx_mock.get(bing._METADATA_URL).mock(return_value=httpx.Response(503))
+    with pytest.raises(ProviderError, match="HTTP request failed"):
+        bing.fetch({})
+
+
+def test_bing_rejects_invalid_json_metadata(
+    respx_mock: respx.router.MockRouter,
+) -> None:
+    respx_mock.get(bing._METADATA_URL).mock(
+        return_value=httpx.Response(200, content=b"<html>not json</html>")
+    )
+    with pytest.raises(ProviderError, match="not valid JSON"):
+        bing.fetch({})
+
+
+def test_bing_rejects_non_numeric_options() -> None:
+    with pytest.raises(ProviderError, match="must be numeric"):
+        bing.fetch({"timeout": "soon"})
 
 
 # --- bing download size cap (item 8) ---

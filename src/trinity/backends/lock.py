@@ -97,7 +97,10 @@ class LockBackend:
         try:
             _kconfig.reload_lockscreen_config()
         except _kconfig.KConfigToolMissing:
-            _log.warning("qdbus6 not available; lock screen will reload on next lock")
+            _log.warning(
+                "qdbus6_missing",
+                hint="lock screen will reload on next lock",
+            )
 
         new_sha = sha256_file(file_path)
         manifest.append(

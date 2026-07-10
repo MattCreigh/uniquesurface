@@ -37,8 +37,9 @@ def test_qdbus_call_logs_debug_when_service_missing() -> None:
     assert "refreshWallpaper" in argv
 
 
-def test_qdbus_call_logs_debug_on_other_failure() -> None:
-    """Non-missing-service failures are still soft; we log debug, not error."""
+def test_qdbus_call_logs_warning_on_other_failure() -> None:
+    """Non-missing-service failures are still soft (no raise); they log a
+    warning so real breakage is visible in the journal."""
     with (
         patch.object(_kconfig.shutil, "which", return_value="/usr/bin/qdbus6"),
         patch.object(

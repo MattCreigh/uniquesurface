@@ -25,6 +25,7 @@ accent_color = "#1d99f3"
 
 [surface.lock]       # optional, defaults shown
 on_idle_dim_seconds = 10
+suppress_wake_keypress = true
 
 [surface.behaviour]  # optional, defaults shown
 shared_dir = "/usr/local/share/wallpapers"
@@ -44,14 +45,50 @@ The provider plugin to fetch a wallpaper from. Built-in values:
 `options` is a free-form table whose schema depends on the provider.
 Validation is performed by the provider at fetch time.
 
+### `bing` options
+
+| Key          | Type   | Default       | Notes                                   |
+|--------------|--------|---------------|-----------------------------------------|
+| `mkt`        | string | `"en-US"`     | Market code.                            |
+| `resolution` | string | `"1920x1080"` | Requested resolution.                   |
+| `index`      | int    | `0`           | Day offset (0 = today, 1 = yesterday).  |
+| `timeout`    | float  | `30.0`        | Per-request timeout in seconds.         |
+
+Downloads are capped at 50 MiB.
+
+### `file` options
+
+| Key    | Type   | Default | Notes                          |
+|--------|--------|---------|--------------------------------|
+| `path` | string | —       | Required. `~` and `$VAR` expand. |
+
+For safety the path must resolve inside an allowed root:
+`~/Pictures`, `~/Wallpapers`, `/usr/share/wallpapers`,
+`/usr/share/backgrounds`, `/usr/local/share/wallpapers`, or the
+directory named by `$TRINITY_SHARED_DIR`. Files over 100 MiB are
+refused.
+
+### `solid` options
+
+| Key           | Type   | Default     | Notes                                |
+|---------------|--------|-------------|--------------------------------------|
+| `color`       | string | `"#1d99f3"` | `#RGB` or `#RRGGBB`.                 |
+| `gradient_to` | string | (none)      | Second colour for a linear gradient. |
+| `width`       | int    | `1920`      | 1–7680.                              |
+| `height`      | int    | `1080`      | 1–7680.                              |
+| `quality`     | int    | `85`        | JPEG quality (clamped to 1–100).     |
+
 ## `[surface.fonts]`
 
 Applied to login + lock QML via the sentinel-based patcher.
 
 - `family`: any installed font family name. Verified with `fc-match` at
   install time.
-- `weight`: a CSS-style weight token (e.g. `Normal`, `Bold`).
-- `password_character`: the mask character shown in the password field.
+- `weight`: a Qt weight token (`Thin`, `ExtraLight`, `Light`, `Normal`,
+  `Medium`, `DemiBold`, `Bold`, `ExtraBold`, `Black`) or a numeric
+  weight `100`–`900`.
+- `password_character`: the mask character shown in the password field
+  (1–4 characters).
 
 ## `[surface.login]`
 
@@ -78,19 +115,18 @@ Tokens applied to the SDDM login screen.
 
 Tokens applied to the Plasma lock screen (`LockScreenUi.qml`).
 
-- `on_idle_dim_seconds`: seconds before the lock screen dims. Rewrites
-  the `fadeoutTimer` interval (seconds → milliseconds) in
+- `on_idle_dim_seconds`: seconds before the lock screen dims (0–600).
+  Rewrites the `fadeoutTimer` interval (seconds → milliseconds) in
   `LockScreenUi.qml`. A value of `0` sets `interval: 0`, which makes the
   timer fire immediately — the lock-screen UI dims as soon as it wakes.
   Use a positive value unless you want an always-dimmed lock screen.
   Evidence: `LockScreenUi.qml:164-166`
   `Timer { id: fadeoutTimer; interval: 10000 }`.
-
-> **Removed:** `suppress_wake_keypress` was removed because the
-> `Keys.onPressed` handler structure (`LockScreenUi.qml:160-163`) makes
-> a safe in-place structural edit fragile; the option could never be
-> implemented. Existing config files containing it still load — the key
-> is stripped with a warning rather than failing validation.
+- `suppress_wake_keypress`: when `true` (the default), the keypress that
+  wakes the lock screen is consumed instead of being typed into the
+  password field. Implemented by inserting a guard into the password
+  box's `Keys.onPressed` handler in `MainBlock.qml`; setting the key to
+  `false` removes the guard on the next `apply`.
 
 ## `[surface.behaviour]`
 
@@ -100,3 +136,11 @@ File layout.
   `trinity install` with root; the daily POTD is copied here.
 - `user_dir`: per-user canonical copy directory. The latest wallpaper
   is always written here first; the shared copy follows.
+
+## Environment variables
+
+| Variable             | Effect                                                                 |
+|----------------------|------------------------------------------------------------------------|
+| `TRINITY_SHARED_DIR` | Overrides the shared wallpaper directory (also added to the `file` provider's allowed roots). |
+| `TRINITY_DEBUG`      | When set, unexpected errors print a full Python traceback instead of the condensed error block. |
+| `XDG_CONFIG_HOME` / `XDG_STATE_HOME` / `XDG_CACHE_HOME` | Standard XDG base-directory overrides for config, state, and cache locations. |

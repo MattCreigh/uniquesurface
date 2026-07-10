@@ -1,14 +1,16 @@
 """Template drift detection.
 
 For each tracked QML file we keep a pristine copy in the state dir.
-On every patch we compare the SHA-256 of the on-disk file with the
-sentinel region stripped against the stored pristine SHA-256.
+On every patch we compare the SHA-256 of the on-disk file (sentinel
+region stripped, managed values normalised) against the stored
+pristine hashed the same way.
 
 If the hashes differ:
-1. Save the current file as ``<path>.trinity.drift.<ts>``.
-2. Re-extract a fresh pristine template from the running system.
-3. If the re-extracted template still does not match the stripped
-   on-disk file, emit a hard error and refuse to patch.
+1. Save the current file as ``<path>.trinity.drift.<ts>`` (unless an
+   identical backup already exists).
+2. Raise :class:`DriftError` and refuse to patch. The drifted content
+   is never silently adopted; the user consents explicitly via
+   ``trinity qml-update-templates`` or ``trinity apply --adopt-drift``.
 """
 
 from __future__ import annotations
@@ -20,7 +22,11 @@ from pathlib import Path
 
 from trinity.manifest import sha256_bytes, sha256_file
 from trinity.theme import extract
-from trinity.theme.qml_patch import HEADER_LINE
+from trinity.theme.qml_patch import (
+    _FADEOUT_TIMER_INTERVAL_RE,
+    _WAKE_GUARD_BLOCK_RE,
+    HEADER_LINE,
+)
 
 _MARKER_START = "/* @trinity:start */"
 _MARKER_END = "/* @trinity:end */"
@@ -91,13 +97,6 @@ _MANAGED_PROPS: tuple[str, ...] = (
     "clockFormat",
 )
 
-# The fadeoutTimer interval regex is shared with the apply path
-# (qml_patch.py) so a single definition is maintained. Importing it
-# avoids the two copies drifting out of sync.
-from trinity.theme.qml_patch import (
-    _FADEOUT_TIMER_INTERVAL_RE as _FADEOUT_TIMER_INTERVAL_RE_DT,  # noqa: E402
-)
-
 
 def normalize_managed_values(text: str) -> str:
     """Normalise the values trinity intentionally rewrites to a placeholder.
@@ -125,9 +124,7 @@ def normalize_managed_values(text: str) -> str:
             r'\1"@trinity@managed@"',
             text,
         )
-    text = _FADEOUT_TIMER_INTERVAL_RE_DT.sub(r"\g<1>@trinity@managed@", text)
-    from trinity.theme.qml_patch import _WAKE_GUARD_BLOCK_RE
-
+    text = _FADEOUT_TIMER_INTERVAL_RE.sub(r"\g<1>@trinity@managed@", text)
     text = _WAKE_GUARD_BLOCK_RE.sub("", text)
     return text
 
@@ -249,7 +246,7 @@ def handle_drift(name: str, vendor_path: Path) -> Path | None:
         log.warning(
             "no_pristine_template",
             name=name,
-            vendor_path=vendor_path,
+            vendor_path=str(vendor_path),
             hint="run 'trinity install' first",
         )
         raise DriftError(
@@ -270,18 +267,18 @@ def handle_drift(name: str, vendor_path: Path) -> Path | None:
     existing = _existing_backup(vendor_path, current_sha)
     if existing is not None:
         log.warning(
-            "drift detected; backup with identical content already exists",
-            vendor_path=vendor_path,
-            backup_path=existing,
+            "qml_drift_backup_exists",
+            vendor_path=str(vendor_path),
+            backup_path=str(existing),
         )
         backup_path = existing
     else:
         ts = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
         backup_path = vendor_path.parent / f"{vendor_path.name}.trinity.drift.{ts}"
         log.warning(
-            "drift detected; creating backup",
-            vendor_path=vendor_path,
-            backup_path=backup_path,
+            "qml_drift_backup_created",
+            vendor_path=str(vendor_path),
+            backup_path=str(backup_path),
         )
         try:
             shutil.copy2(vendor_path, backup_path)

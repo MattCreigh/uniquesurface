@@ -141,8 +141,8 @@ class DesktopBackend:
             _kconfig.evaluate_wallpaper_script(image_uri=uri, plugin=_DEFAULT_PLUGIN)
         except _kconfig.KConfigToolMissing:
             _log.warning(
-                "qdbus6 not available; "
-                "desktop wallpaper will apply on next Plasma start"
+                "qdbus6_missing",
+                hint="desktop wallpaper will apply on next Plasma start",
             )
 
         new_sha = sha256_file(file_path)

@@ -1,6 +1,7 @@
 """Systemd user-unit rendering for the daily POTD refresh."""
 
 __all__ = [
+    "TrinityBinaryNotFound",
     "disable_and_stop",
     "enable_and_start",
     "install",
@@ -11,10 +12,9 @@ __all__ = [
     "render_timer",
     "resume",
     "systemctl",
-    "TrinityBinaryNotFound",
 ]
 
-from trinity.systemd.writer import (  # noqa: F401
+from trinity.systemd.writer import (
     TrinityBinaryNotFound,
     disable_and_stop,
     enable_and_start,

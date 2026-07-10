@@ -52,25 +52,25 @@ def test_parses_minimal_config() -> None:
 
 
 def test_rejects_unknown_top_level_key() -> None:
-    with pytest.raises(Exception):  # noqa: PT011
+    with pytest.raises(Exception):
         config.load_config_from_string(SAMPLE_TOML + "\n[surface.unknown]\nfoo = 1\n")
 
 
 def test_rejects_invalid_provider_name() -> None:
     bad = SAMPLE_TOML.replace('provider = "bing"', "provider = 'Bing!'")
-    with pytest.raises(Exception):  # noqa: PT011
+    with pytest.raises(Exception):
         config.load_config_from_string(bad)
 
 
 def test_rejects_invalid_accent_color() -> None:
     bad = SAMPLE_TOML.replace('accent_color = "#1d99f3"', 'accent_color = "blue"')
-    with pytest.raises(Exception):  # noqa: PT011
+    with pytest.raises(Exception):
         config.load_config_from_string(bad)
 
 
 def test_rejects_invalid_password_character() -> None:
     bad = SAMPLE_TOML.replace('password_character = "*"', 'password_character = ""')
-    with pytest.raises(Exception):  # noqa: PT011
+    with pytest.raises(Exception):
         config.load_config_from_string(bad)
 
 
@@ -87,6 +87,16 @@ def test_dump_and_reload_round_trip() -> None:
     assert reparsed == parsed
 
 
+def test_dump_omits_none_values() -> None:
+    """TOML has no null: None-valued keys are omitted, never written as ''."""
+    dumped = config._to_toml(  # type: ignore[attr-defined]
+        {"section": {"kept": "x", "dropped": None}}
+    )
+    assert "kept" in dumped
+    assert "dropped" not in dumped
+    assert '""' not in dumped
+
+
 def test_expand_behaviour_paths() -> None:
     parsed = config.load_config_from_string(SAMPLE_TOML)
     expanded = config.expand_behaviour_paths(parsed)
@@ -99,7 +109,7 @@ def test_missing_source_provider_fails() -> None:
 [surface]
 schema_version = 1
 """
-    with pytest.raises(Exception):  # noqa: PT011
+    with pytest.raises(Exception):
         config.load_config_from_string(bad)
 
 
@@ -145,5 +155,5 @@ bogus_key = true
 [surface.source]
 provider = "bing"
 """
-    with pytest.raises(Exception, match="extra|bogus_key"):
+    with pytest.raises(Exception, match=r"extra|bogus_key"):
         load_config_from_string(toml)

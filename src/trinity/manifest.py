@@ -129,7 +129,7 @@ class Manifest:
         # concurrent ``trinity apply`` invocations could clobber each
         # other's entries.
         line = entry.to_json().encode("utf-8") + b"\n"
-        flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT
+        flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_CLOEXEC
         try:
             fd = os.open(self.path, flags, 0o644)
         except PermissionError as exc:
@@ -139,7 +139,13 @@ class Manifest:
                 f"  sudo chown -R $USER:$USER {self.path.parent}"
             ) from exc
         try:
-            os.write(fd, line)
+            # os.write may return a short count (e.g. on ENOSPC or a
+            # signal); loop until the whole line is on disk so a partial
+            # entry can never be silently recorded as complete.
+            view = memoryview(line)
+            while view:
+                written = os.write(fd, view)
+                view = view[written:]
         finally:
             os.close(fd)
         return entry
@@ -330,17 +336,6 @@ def _prune_snapshots(
             except OSError:
                 pass
     return deleted
-
-
-def truncate(manifest: Manifest) -> None:
-    """Empty the manifest log and prune all snapshots.
-
-    Kept for backwards compatibility; ``restore`` now calls the internal
-    truncation helpers directly, but external callers (and tests) may
-    still use this to reset state.
-    """
-    _truncate_log(manifest, [])
-    _prune_snapshots(manifest, [])
 
 
 def compact(manifest: Manifest, *, snapshots_dir: Path | None = None) -> int:

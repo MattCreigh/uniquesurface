@@ -5,7 +5,7 @@
   [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
   [![KDE Plasma 6](https://img.shields.io/badge/KDE-Plasma%206-1d99f3.svg?logo=kde)](https://kde.org/plasma-desktop/)
   [![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/License-PolyForm%20Noncommercial-yellow.svg)](LICENSE)
-  [![Tests](https://img.shields.io/badge/tests-114%20passed-success)](https://pytest.org/)
+  [![CI](https://github.com/MattCreigh/trinity/actions/workflows/ci.yml/badge.svg)](https://github.com/MattCreigh/trinity/actions/workflows/ci.yml)
 </div>
 
 > [!NOTE]
@@ -179,11 +179,15 @@ Design principles:
 ```sh
 git clone https://github.com/MattCreigh/trinity.git
 cd trinity
-uv sync            # create venv + install dev deps
-uv run pytest -q   # run the test suite (114 tests)
+uv sync --group test   # create venv + install dev & test deps
+uv run pytest -q       # run the test suite
 uv run ruff check src tests
-uv run mypy src tests
+uv run ruff format --check src tests
+uv run mypy src
 ```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full quality gates and
+PR process.
 
 ---
 

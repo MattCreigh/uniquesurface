@@ -1,10 +1,3 @@
-from __future__ import annotations
-
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Protocol, cast
-
-import pluggy
-
 """Provider plugin system.
 
 A provider returns the bytes of an image suitable for use as the
@@ -13,11 +6,18 @@ desktop/lock/login wallpaper. Built-ins ship under
 ``pluggy`` entry points declared under the ``trinity.providers`` group.
 
 Security note: third-party providers run as the invoking user and may
-read network resources. The registry only loads entry points whose
-distribution name is *explicitly* named in the user's config; the
-implementation here trusts that list.
+read network resources. Treat the entry-point group as a supply-chain
+surface and only install providers you trust (see ``README.md`` in this
+package).
 """
 
+from __future__ import annotations
+
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Protocol, cast
+
+import pluggy
 
 if TYPE_CHECKING:
     from trinity.schema import Source
@@ -80,7 +80,12 @@ class ProviderHooks:
 class _BuiltinPlugin:
     """Adapter exposing a built-in provider as a pluggy plugin."""
 
-    def __init__(self, name: str, info: ProviderInfo, fetch: Any) -> None:
+    def __init__(
+        self,
+        name: str,
+        info: ProviderInfo,
+        fetch: Callable[[dict[str, Any]], FetchedImage],
+    ) -> None:
         self._name = name
         self._info = info
         self._fetch = fetch
@@ -95,7 +100,7 @@ class _BuiltinPlugin:
 
     @hookimpl
     def trinity_provider_fetch(self, options: dict[str, Any]) -> FetchedImage:
-        return cast(FetchedImage, self._fetch(options))
+        return self._fetch(options)
 
 
 _BING_INFO = ProviderInfo(
@@ -141,27 +146,15 @@ def _register_entry_point_plugins(pm: pluggy.PluginManager) -> None:
     object cannot be imported) are logged at warning level and skipped
     so one broken plugin cannot prevent the built-ins from working.
     """
+    from importlib.metadata import entry_points
+
     from trinity.logging import get_logger
 
     log = get_logger(__name__)
-    try:
-        # importlib.metadata is stdlib on 3.12.
-        from importlib.metadata import entry_points
-    except Exception:  # pragma: no cover - 3.12 always has this
-        return
-
-    try:
-        eps = entry_points(group="trinity.providers")
-    except TypeError:
-        # Older importlib.metadata API (pre-3.10) returns a dict-like.
-        try:
-            eps = entry_points().get("trinity.providers", [])  # type: ignore[attr-defined]
-        except Exception:
-            return
-    for ep in eps:
+    for ep in entry_points(group="trinity.providers"):
         try:
             plugin = ep.load()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             log.warning(
                 "provider_entry_point_load_failed",
                 entry_point=ep.name,
@@ -171,7 +164,7 @@ def _register_entry_point_plugins(pm: pluggy.PluginManager) -> None:
         try:
             pm.register(plugin, name=ep.name)
             log.info("provider_entry_point_loaded", entry_point=ep.name)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             log.warning(
                 "provider_entry_point_register_failed",
                 entry_point=ep.name,

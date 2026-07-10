@@ -36,13 +36,22 @@ _DEFAULT_OPTIONS: dict[str, Any] = {}
 # plasmalogin-visible dir is added at runtime if it exists, so a
 # wallpaper already in place there can be re-applied without copying
 # it into ``~/Pictures`` first.
-_ALLOWED_ROOTS: tuple[Path, ...] = (
-    Path("~/Pictures").expanduser(),
-    Path("~/Wallpapers").expanduser(),
-    Path("/usr/share/wallpapers"),
-    Path("/usr/share/backgrounds"),
-    Path("/usr/local/share/wallpapers"),
+_ALLOWED_ROOT_TEMPLATES: tuple[str, ...] = (
+    "~/Pictures",
+    "~/Wallpapers",
+    "/usr/share/wallpapers",
+    "/usr/share/backgrounds",
+    "/usr/local/share/wallpapers",
 )
+
+
+def _allowed_roots() -> tuple[Path, ...]:
+    """Expand the allow-list templates against the *current* environment.
+
+    Expanded per-call (not at import time) so a changed ``HOME`` — a
+    ``sudo`` run, or test isolation — is honoured.
+    """
+    return tuple(Path(r).expanduser() for r in _ALLOWED_ROOT_TEMPLATES)
 
 
 def _resolved_allowed_roots() -> tuple[Path, ...]:
@@ -52,7 +61,7 @@ def _resolved_allowed_roots() -> tuple[Path, ...]:
     Roots that don't exist on the host are kept anyway — the check is
     a path-prefix containment, not an existence check.
     """
-    roots: list[Path] = list(_ALLOWED_ROOTS)
+    roots: list[Path] = list(_allowed_roots())
     shared = os.environ.get("TRINITY_SHARED_DIR")
     if shared:
         try:
@@ -90,19 +99,22 @@ def fetch(options: dict[str, Any]) -> FetchedImage:
         raise ProviderError("file provider requires a 'path' option")
 
     path = Path(os.path.expandvars(os.path.expanduser(raw)))
-    if not path.is_file():
-        raise ProviderError(f"file provider: file not found: {path}")
 
     # Security: refuse paths that don't resolve to an allow-listed root.
     # A symlink that escapes the root is also caught here because we
-    # compare against ``path.resolve()``.
+    # compare against ``path.resolve()``. Checked *before* the existence
+    # check so the error message never discloses whether a path outside
+    # the allowed roots exists.
     if not _is_under(path, _resolved_allowed_roots()):
-        allowed = ", ".join(str(r) for r in _ALLOWED_ROOTS)
+        allowed = ", ".join(str(r) for r in _allowed_roots())
         raise ProviderError(
             f"file provider: path {path} is not under an allowed root "
-            f"({allowed}). Add the directory to surface.source.options.path "
-            f"only if you trust its contents."
+            f"({allowed}). Set TRINITY_SHARED_DIR or move the image into "
+            f"an allowed directory."
         )
+
+    if not path.is_file():
+        raise ProviderError(f"file provider: file not found: {path}")
 
     size = path.stat().st_size
     if size > _MAX_LOCAL_BYTES:

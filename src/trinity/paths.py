@@ -15,7 +15,7 @@ from platformdirs import user_cache_dir, user_config_dir, user_state_dir
 _APP_NAME = "trinity"
 
 
-def _get_user_home() -> Path | None:
+def invoking_user_home() -> Path | None:
     """Return the original user's home directory if running via sudo, else None."""
     sudo_user = os.environ.get("SUDO_USER")
     if sudo_user and os.geteuid() == 0:
@@ -51,7 +51,7 @@ def invoking_user_uid_gid() -> tuple[int, int] | None:
 
 def config_dir() -> Path:
     """Return ``~/.config/trinity`` (XDG_CONFIG_HOME aware)."""
-    sudo_home = _get_user_home()
+    sudo_home = invoking_user_home()
     if sudo_home:
         return sudo_home / ".config" / _APP_NAME
     return Path(user_config_dir(_APP_NAME, roaming=False))
@@ -59,7 +59,7 @@ def config_dir() -> Path:
 
 def state_dir() -> Path:
     """Return ``~/.local/state/trinity`` (XDG_STATE_HOME aware)."""
-    sudo_home = _get_user_home()
+    sudo_home = invoking_user_home()
     if sudo_home:
         return sudo_home / ".local" / "state" / _APP_NAME
     return Path(user_state_dir(_APP_NAME, roaming=False))
@@ -67,7 +67,7 @@ def state_dir() -> Path:
 
 def cache_dir() -> Path:
     """Return ``~/.cache/trinity`` (XDG_CACHE_HOME aware)."""
-    sudo_home = _get_user_home()
+    sudo_home = invoking_user_home()
     if sudo_home:
         return sudo_home / ".cache" / _APP_NAME
     return Path(user_cache_dir(_APP_NAME))
@@ -81,16 +81,6 @@ def config_file() -> Path:
 def manifest_file() -> Path:
     """Default path to the append-only manifest log."""
     return state_dir() / "manifest.jsonl"
-
-
-def last_wallpaper() -> Path:
-    """Per-user canonical wallpaper copy."""
-    return state_dir() / "last_wallpaper.jpg"
-
-
-def last_config_copy() -> Path:
-    """Snapshot of the last successfully applied config."""
-    return state_dir() / "last_config.toml"
 
 
 def templates_dir() -> Path:

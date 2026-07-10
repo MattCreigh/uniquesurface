@@ -29,6 +29,12 @@ from trinity.providers import (
 
 _log = get_logger(__name__)
 
+# Logical template names of the lock-screen QML files that receive the
+# structural lock-token edits (see LockPatch in theme.qml_patch).
+_LOCKSCREEN_QML_NAMES = frozenset(
+    {"plasma_lockscreen_ui", "plasma_lockscreen_mainblock"}
+)
+
 
 def default_backends(*, accent_color: str | None = None) -> list[Backend]:
     """Return the default list of backends in apply order.
@@ -265,18 +271,14 @@ def apply_to_surfaces(
                 # ``apply_lock_tokens`` is a no-op on a file whose anchor
                 # regex doesn't match, so calling it on both is safe and
                 # ensures the right edit lands in the right file.
-                for qml_name in (
-                    "plasma_lockscreen_ui",
-                    "plasma_lockscreen_mainblock",
-                ):
-                    if qml_name == name:
-                        lmsg = apply_lock_tokens(
-                            name=name,
-                            vendor_path=vendor_path,
-                            manifest=manifest,
-                            patch=lock_patch,
-                        )
-                        plan.append(f"QML lock '{name}': {lmsg}")
+                if name in _LOCKSCREEN_QML_NAMES:
+                    lmsg = apply_lock_tokens(
+                        name=name,
+                        vendor_path=vendor_path,
+                        manifest=manifest,
+                        patch=lock_patch,
+                    )
+                    plan.append(f"QML lock '{name}': {lmsg}")
             except drift.DriftError as exc:
                 if adopt_drift:
                     # Explicit consent: adopt the drifted (stripped)
@@ -302,23 +304,17 @@ def apply_to_surfaces(
                         patch=font_patch,
                     )
                     plan.append(f"QML backend '{name}' applied: {msg}")
-                    # Apply lock tokens on BOTH lock-screen files, mirroring
-                    # the non-adopt path. The previous code only patched
-                    # plasma_lockscreen_ui here, silently skipping the
-                    # wake-keypress guard in MainBlock.qml after a drift
-                    # adoption.
-                    for qml_name in (
-                        "plasma_lockscreen_ui",
-                        "plasma_lockscreen_mainblock",
-                    ):
-                        if qml_name == name:
-                            lmsg = apply_lock_tokens(
-                                name=name,
-                                vendor_path=vendor_path,
-                                manifest=manifest,
-                                patch=lock_patch,
-                            )
-                            plan.append(f"QML lock '{name}': {lmsg}")
+                    # Apply lock tokens on lock-screen files, mirroring the
+                    # non-adopt path, so the wake-keypress guard also lands
+                    # after a drift adoption.
+                    if name in _LOCKSCREEN_QML_NAMES:
+                        lmsg = apply_lock_tokens(
+                            name=name,
+                            vendor_path=vendor_path,
+                            manifest=manifest,
+                            patch=lock_patch,
+                        )
+                        plan.append(f"QML lock '{name}': {lmsg}")
                 else:
                     # Drifted vendor file: skip patching but keep going
                     # so other surfaces still apply. The user must

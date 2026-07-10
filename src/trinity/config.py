@@ -97,6 +97,10 @@ def _to_toml(data: Any, prefix: str = "") -> str:
         if isinstance(value, dict):
             section_key = f"{prefix}.{key}" if prefix else key
             sub_sections.append((section_key, value))
+        elif value is None:
+            # TOML has no null; omitting the key round-trips back to the
+            # model default, whereas writing "" would change the type.
+            continue
         else:
             lines.append(f"{key} = {_toml_literal(value)}")
     out = "\n".join(lines)
@@ -113,8 +117,6 @@ def _toml_literal(value: Any) -> str:
         return "true" if value else "false"
     if isinstance(value, (int, float)):
         return repr(value)
-    if value is None:
-        return '""'
     if isinstance(value, str):
         escaped = value.replace("\\", "\\\\").replace('"', '\\"')
         return f'"{escaped}"'

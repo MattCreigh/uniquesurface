@@ -207,6 +207,41 @@ def test_dedup_snapshot_survives_until_neither_references_it(tmp_path: Path) -> 
     assert Path(snap_path).exists()
 
 
+def test_iter_entries_skips_corrupt_lines(tmp_path: Path) -> None:
+    """A single corrupted line (e.g. a partial write during a crash) must
+    not prevent the remaining valid entries from being read."""
+    log = tmp_path / "manifest.jsonl"
+    m = manifest.Manifest(log)
+    first = m.append(op="write", path="/a", prev_sha256=None, new_sha256="1")
+    with log.open("a", encoding="utf-8") as f:
+        f.write('{"ts": "2026-01-01T00:00:00+00:00", "op": "wri\n')  # truncated
+        f.write("not json at all\n")
+        f.write('{"ts": "x", "op": "write"}\n')  # valid JSON, missing keys
+    second = m.append(op="write", path="/b", prev_sha256=None, new_sha256="2")
+
+    entries = m.iter_entries()
+    assert entries == [first, second]
+
+
+def test_append_message_names_manifest_on_permission_error(tmp_path: Path) -> None:
+    """A root-owned manifest dir yields an actionable chown hint."""
+    import pytest
+
+    locked_dir = tmp_path / "locked"
+    locked_dir.mkdir()
+    log = locked_dir / "manifest.jsonl"
+    log.write_text("")
+    locked_dir.chmod(0o555)
+    log.chmod(0o444)
+    try:
+        m = manifest.Manifest(log)
+        with pytest.raises(PermissionError, match="chown"):
+            m.append(op="write", path="/x", prev_sha256=None, new_sha256="1")
+    finally:
+        locked_dir.chmod(0o755)
+        log.chmod(0o644)
+
+
 def test_compaction_keeps_newest_n_entries(tmp_path: Path) -> None:
     """compact() drops oldest entries beyond _RETENTION_ENTRIES and
     prunes their snapshots, keeping exactly the newest N."""
