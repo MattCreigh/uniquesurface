@@ -19,6 +19,8 @@ import os
 from pathlib import Path
 from typing import Any
 
+from pydantic import BaseModel, ConfigDict, Field
+
 from trinity.providers import FetchedImage, ProviderError
 
 # Refuse to read a local image larger than this into memory before
@@ -28,7 +30,23 @@ from trinity.providers import FetchedImage, ProviderError
 # real wallpaper and still bounds the worst case.
 _MAX_LOCAL_BYTES = 100 * 1024 * 1024
 
+
+class FileOptions(BaseModel):
+    """Validated options for the local-file provider."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    path: str = Field(
+        description="Path to a local image file (expanded with ~ and $VAR).",
+        min_length=1,
+    )
+
+
+# Defaults used when fetch() is called directly (not via the schema-validated
+# pipeline). The schema in FileOptions is the source of truth for validation;
+# these are just the no-args defaults so direct tests work.
 _DEFAULT_OPTIONS: dict[str, Any] = {}
+
 
 # Allow-listed path roots for the ``file`` provider. A user-supplied
 # path must resolve (after ``~``/``$VAR`` expansion and symlink

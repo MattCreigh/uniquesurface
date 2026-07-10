@@ -159,19 +159,27 @@ def test_solid_gradient() -> None:
 
 
 def test_solid_rejects_zero_dimensions() -> None:
-    with pytest.raises(ProviderError):
-        solid.fetch({"color": "#000000", "width": 0, "height": 0})
+    """Zero dimensions are caught by the SolidOptions schema (gt=0)."""
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        solid.SolidOptions(color="#000000", width=0, height=0)
 
 
 def test_solid_rejects_non_numeric_dimensions() -> None:
-    """Non-numeric options raise ProviderError, not a bare ValueError."""
-    with pytest.raises(ProviderError, match="must be integers"):
-        solid.fetch({"color": "#000000", "width": "wide", "height": 8})
+    """Non-numeric options are caught by the SolidOptions schema (int type)."""
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        solid.SolidOptions(color="#000000", width="wide", height=8)
 
 
 def test_solid_rejects_oversize_dimensions() -> None:
-    with pytest.raises(ProviderError, match="cap"):
-        solid.fetch({"color": "#000000", "width": 100_000, "height": 8})
+    """Oversize dimensions are caught by the SolidOptions schema."""
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        solid.SolidOptions(width=100_000, height=8)
 
 
 # --- file --------------------------------------------------------------
@@ -343,8 +351,11 @@ def test_bing_rejects_invalid_json_metadata(
 
 
 def test_bing_rejects_non_numeric_options() -> None:
-    with pytest.raises(ProviderError, match="must be numeric"):
-        bing.fetch({"timeout": "soon"})
+    """Non-numeric timeout/index are caught by the BingOptions schema."""
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        bing.BingOptions(timeout="soon")
 
 
 # --- bing download size cap (item 8) ---
@@ -396,3 +407,161 @@ def test_bing_rejects_oversize_while_streaming(
     )
     with pytest.raises(ProviderError, match="download cap"):
         bing.fetch({})
+
+
+# --- Phase 1: provider-declared option schemas ---
+
+
+def test_builtin_providers_declare_option_schemas() -> None:
+    """Every built-in provider must implement trinity_provider_options_schema
+    and return a pydantic BaseModel with extra='forbid'."""
+    from pydantic import BaseModel
+
+    from trinity.providers import get_provider_options_schema, make_plugin_manager
+
+    pm = make_plugin_manager()
+    for name in ("bing", "file", "solid"):
+        schema = get_provider_options_schema(pm, name)
+        assert schema is not None, f"{name} has no options schema"
+        assert issubclass(schema, BaseModel)
+        # All built-in schemas use extra='forbid' to reject unknown keys.
+        assert schema.model_config.get("extra") == "forbid", (
+            f"{name} schema must forbid extra keys"
+        )
+
+
+def test_provider_schema_rejects_unknown_keys() -> None:
+    """An unknown key in the schema raises ValidationError, not a silent
+    pass-through."""
+    from pydantic import ValidationError
+
+    from trinity.providers.builtin.bing import BingOptions
+    from trinity.providers.builtin.file import FileOptions
+    from trinity.providers.builtin.solid import SolidOptions
+
+    with pytest.raises(ValidationError):
+        BingOptions.model_validate({"mkt": "en-US", "resoultion": "1920x1080"})
+    with pytest.raises(ValidationError):
+        FileOptions.model_validate({"path": "/tmp/x.png", "extraneous": True})
+    with pytest.raises(ValidationError):
+        SolidOptions.model_validate({"color": "#000000", "qality": 85})
+
+
+def test_load_config_validates_provider_options(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """load_config() rejects an unknown provider option with a clear error
+    naming the config file and the offending field."""
+    from trinity.config import load_config
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    cfg_path = tmp_path / "trinity" / "config.toml"
+    cfg_path.parent.mkdir(parents=True)
+    cfg_path.write_text(
+        "[surface.source]\n"
+        'provider = "bing"\n'
+        "[surface.source.options]\n"
+        'mkt = "en-US"\n'
+        'resoultion = "1920x1080"  # typo: should be "resolution"\n'
+    )
+    with pytest.raises(ValueError, match=r"resoultion|bing.*rejected"):
+        load_config(cfg_path)
+
+
+def test_load_config_accepts_valid_provider_options(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A config with all valid provider options loads cleanly."""
+    from trinity.config import load_config
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    cfg_path = tmp_path / "trinity" / "config.toml"
+    cfg_path.parent.mkdir(parents=True)
+    cfg_path.write_text(
+        "[surface.source]\n"
+        'provider = "bing"\n'
+        "[surface.source.options]\n"
+        'mkt = "en-GB"\n'
+        'resolution = "1920x1080"\n'
+        "index = 0\n"
+    )
+    cfg = load_config(cfg_path)
+    assert cfg.surface.source.provider == "bing"
+
+
+def test_validate_provider_options_fallback_for_third_party() -> None:
+    """A provider without a schema hook falls back to permissive behavior
+    with a logged warning."""
+    import pluggy
+
+    from trinity.providers import (
+        FetchedImage,
+        ProviderHooks,
+        ProviderInfo,
+        validate_provider_options,
+    )
+    from trinity.schema import Source
+
+    pm = pluggy.PluginManager("trinity")
+    pm.add_hookspecs(ProviderHooks)
+
+    class _ThirdPartyPlugin:
+        def trinity_provider_name(self) -> str:
+            return "third-party"
+
+        def trinity_provider_info(self) -> ProviderInfo:
+            return ProviderInfo(
+                name="third-party", description="no schema", builtin=False
+            )
+
+        def trinity_provider_fetch(self, options):
+            return FetchedImage(
+                data=b"\x89PNG\r\n\x1a\n" + b"x" * 16,
+                content_type="image/png",
+                suggested_extension=".png",
+            )
+
+    pm.register(_ThirdPartyPlugin(), name="third-party")
+    source = Source(provider="third-party", options={"any_key": "any_value"})
+    result = validate_provider_options(pm, source)
+    # No schema → returns None (permissive fallback).
+    assert result is None
+
+
+def test_provider_info_renders_option_table() -> None:
+    """`trinity provider info <name>` shows the option schema as a table."""
+    from click.testing import CliRunner
+
+    from trinity.cli import main
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["provider", "info", "bing"])
+    assert result.exit_code == 0
+    assert "options:" in result.output
+    for field_name in ("mkt", "resolution", "index", "timeout"):
+        assert field_name in result.output
+
+
+def test_schema_accepted_options_accepted_by_fetch() -> None:
+    """Any options dict that passes the provider's schema is accepted by
+    the registry's validate_provider_options (network and runtime errors
+    are mocked)."""
+    from trinity.providers import make_plugin_manager, validate_provider_options
+    from trinity.providers.builtin.bing import BingOptions
+    from trinity.schema import Source
+
+    valid_dicts: list[dict[str, object]] = [
+        {},
+        {"mkt": "en-GB"},
+        {"resolution": "1024x768"},
+        {"index": 5},
+        {"timeout": 60.0},
+        {"mkt": "ja-JP", "resolution": "3840x2160", "index": 1, "timeout": 45.0},
+    ]
+    pm = make_plugin_manager()
+    for d in valid_dicts:
+        validated = BingOptions.model_validate(d)
+        source = Source(provider="bing", options=validated.model_dump())
+        result = validate_provider_options(pm, source)
+        assert result is not None
+        assert result == validated.model_dump()

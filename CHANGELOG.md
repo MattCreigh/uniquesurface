@@ -6,6 +6,27 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added (Phase 1 — provider-declared option schemas)
+
+- New `trinity_provider_options_schema` pluggy hookspec. Each built-in
+  provider now declares a pydantic `BaseModel` (`extra="forbid"`) that
+  validates its options at config load time. This catches option typos
+  (e.g. `resoultion` instead of `resolution`) at `config validate` time
+  rather than at fetch time (3am timer).
+- `BingOptions`, `FileOptions`, `SolidOptions` — per-provider option
+  models with full field constraints (regex patterns, ge/le bounds,
+  enums). The ad-hoc numeric coercion in `fetch()` has been removed;
+  the schema is the single source of truth.
+- `trinity provider info <name>` now auto-renders an option table from
+  the schema (field name, type, default, description).
+- `load_config()` calls `validate_provider_options()` after pydantic
+  schema validation, with a clear error message naming the config file
+  and the offending field.
+- Third-party providers that don't implement the schema hook fall back
+  to the previous permissive behaviour with a logged warning (backward
+  compatible).
+- `src/trinity/providers/README.md` updated with the new hook contract.
+
 ### Changed (2026-07-10 relicensing)
 
 - **License changed from PolyForm Noncommercial 1.0.0 to GPL-3.0-or-later.**

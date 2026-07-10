@@ -15,9 +15,20 @@ import re
 from typing import Any
 
 from PIL import Image
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from trinity.providers import FetchedImage, ProviderError
 
+_HEX_RE = re.compile(r"^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
+
+# Cap generated image dimensions to avoid unbounded memory allocation from
+# a malicious or mistaken config. 8K (7680x4320) is the largest common
+# desktop resolution and a generous ceiling.
+_MAX_DIM = 7680
+
+# Defaults used when fetch() is called directly (not via the schema-validated
+# pipeline). The schema in SolidOptions is the source of truth for validation;
+# these are just the no-args defaults so direct tests work.
 _DEFAULT_OPTIONS: dict[str, Any] = {
     "color": "#1d99f3",
     "gradient_to": None,
@@ -26,12 +37,45 @@ _DEFAULT_OPTIONS: dict[str, Any] = {
     "quality": 85,
 }
 
-_HEX_RE = re.compile(r"^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
 
-# Cap generated image dimensions to avoid unbounded memory allocation from
-# a malicious or mistaken config. 8K (7680x4320) is the largest common
-# desktop resolution and a generous ceiling.
-_MAX_DIM = 7680
+class SolidOptions(BaseModel):
+    """Validated options for the solid-colour/gradient provider."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    color: str = Field(
+        default="#1d99f3",
+        description="Hex colour string (#RGB or #RRGGBB).",
+    )
+    gradient_to: str | None = Field(
+        default=None,
+        description="Optional second colour for a top→bottom gradient.",
+    )
+    width: int = Field(
+        default=1920,
+        description="Image width in pixels.",
+        gt=0,
+        le=_MAX_DIM,
+    )
+    height: int = Field(
+        default=1080,
+        description="Image height in pixels.",
+        gt=0,
+        le=_MAX_DIM,
+    )
+    quality: int = Field(
+        default=85,
+        description="JPEG quality (1-100).",
+        ge=1,
+        le=100,
+    )
+
+    @field_validator("color", "gradient_to")
+    @classmethod
+    def _check_hex(cls, value: str | None) -> str | None:
+        if value is not None and not _HEX_RE.match(value):
+            raise ValueError(f"invalid hex colour: {value!r}")
+        return value
 
 
 def _parse_color(value: str) -> tuple[int, int, int]:
@@ -78,23 +122,15 @@ def _gradient_image(
 def fetch(options: dict[str, Any]) -> FetchedImage:
     """Generate a solid-colour or gradient JPEG.
 
-    Raises :class:`ProviderError` for invalid colours or dimensions.
+    Options are pre-validated by :class:`SolidOptions` at config load
+    time; this function receives the validated dict.  Raises
+    :class:`ProviderError` only for runtime errors that schemas can't
+    catch (e.g. Pillow internal failures).
     """
     opts = {**_DEFAULT_OPTIONS, **options}
-    try:
-        width = int(opts["width"])
-        height = int(opts["height"])
-        quality = int(opts["quality"])
-    except (TypeError, ValueError) as exc:
-        raise ProviderError(
-            f"solid provider: 'width', 'height' and 'quality' must be integers "
-            f"(got width={opts['width']!r}, height={opts['height']!r}, "
-            f"quality={opts['quality']!r})"
-        ) from exc
-    if width <= 0 or height <= 0:
-        raise ProviderError(f"invalid dimensions: {width}x{height}")
-    if width > _MAX_DIM or height > _MAX_DIM:
-        raise ProviderError(f"dimensions {width}x{height} exceed the {_MAX_DIM}px cap")
+    width = int(opts["width"])
+    height = int(opts["height"])
+    quality = int(opts["quality"])
 
     color = _parse_color(str(opts["color"]))
 
@@ -105,7 +141,6 @@ def fetch(options: dict[str, Any]) -> FetchedImage:
     else:
         img = Image.new("RGB", (width, height), color)
 
-    quality = max(1, min(100, quality))
     buf = io.BytesIO()
     img.save(buf, format="JPEG", quality=quality)
     return FetchedImage(

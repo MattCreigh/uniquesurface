@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import pluggy
+from pydantic import BaseModel
 
 if TYPE_CHECKING:
     from trinity.schema import Source
@@ -76,6 +77,16 @@ class ProviderHooks:
         """Fetch or generate an image; return its bytes."""
         raise NotImplementedError
 
+    @hookspec(firstresult=True)
+    def trinity_provider_options_schema(self) -> type[BaseModel] | None:
+        """Return a pydantic model class validating this provider's options.
+
+        Returning ``None`` (or not implementing the hook) falls back to
+        the permissive ``SourceOptions`` behaviour — all keys accepted,
+        no validation.  Built-in providers always return a schema.
+        """
+        raise NotImplementedError
+
 
 class _BuiltinPlugin:
     """Adapter exposing a built-in provider as a pluggy plugin."""
@@ -85,10 +96,12 @@ class _BuiltinPlugin:
         name: str,
         info: ProviderInfo,
         fetch: Callable[[dict[str, Any]], FetchedImage],
+        options_schema: type[BaseModel] | None = None,
     ) -> None:
         self._name = name
         self._info = info
         self._fetch = fetch
+        self._options_schema = options_schema
 
     @hookimpl
     def trinity_provider_name(self) -> str:
@@ -101,6 +114,10 @@ class _BuiltinPlugin:
     @hookimpl
     def trinity_provider_fetch(self, options: dict[str, Any]) -> FetchedImage:
         return self._fetch(options)
+
+    @hookimpl
+    def trinity_provider_options_schema(self) -> type[BaseModel] | None:
+        return self._options_schema
 
 
 _BING_INFO = ProviderInfo(
@@ -178,9 +195,9 @@ def _register_builtins(pm: pluggy.PluginManager) -> None:
     from trinity.providers.builtin import bing, file, solid
 
     for plugin in (
-        _BuiltinPlugin("bing", _BING_INFO, bing.fetch),
-        _BuiltinPlugin("file", _FILE_INFO, file.fetch),
-        _BuiltinPlugin("solid", _SOLID_INFO, solid.fetch),
+        _BuiltinPlugin("bing", _BING_INFO, bing.fetch, bing.BingOptions),
+        _BuiltinPlugin("file", _FILE_INFO, file.fetch, file.FileOptions),
+        _BuiltinPlugin("solid", _SOLID_INFO, solid.fetch, solid.SolidOptions),
     ):
         pm.register(plugin)
 
@@ -224,8 +241,61 @@ def list_providers(pm: pluggy.PluginManager) -> list[ProviderInfo]:
     return infos
 
 
+def get_provider_options_schema(
+    pm: pluggy.PluginManager, name: str
+) -> type[BaseModel] | None:
+    """Return the pydantic options-schema class for the named provider.
+
+    Returns ``None`` if the provider does not implement the
+    ``trinity_provider_options_schema`` hook (third-party fallback).
+    """
+    plugin = get_provider(pm, name)
+    schema_fn = getattr(plugin, "trinity_provider_options_schema", None)
+    if schema_fn is None:
+        return None
+    return cast("type[BaseModel] | None", schema_fn())
+
+
+def validate_provider_options(
+    pm: pluggy.PluginManager, source: Source
+) -> dict[str, Any] | None:
+    """Validate ``source.options`` against the provider's declared schema.
+
+    Returns the validated options as a dict, or ``None`` if the provider
+    does not declare a schema (third-party fallback — permissive).
+
+    Raises ``ValueError`` with a clear message naming the provider and
+    the offending field(s) if validation fails.
+    """
+    schema_cls = get_provider_options_schema(pm, source.provider)
+    if schema_cls is None:
+        # Third-party provider without a schema hook: fall back to the
+        # permissive behaviour (all keys accepted, no validation).
+        from trinity.logging_setup import get_logger
+
+        log = get_logger(__name__)
+        log.warning(
+            "provider_options_schema_missing",
+            provider=source.provider,
+            hint="third-party provider does not declare an options schema; "
+            "options are not validated",
+        )
+        return None
+    raw = dict(source.options.model_dump())
+    try:
+        validated = schema_cls.model_validate(raw)
+    except Exception as exc:
+        raise ValueError(
+            f"provider '{source.provider}' rejected options: {exc}"
+        ) from exc
+    return validated.model_dump()
+
+
 def fetch_from_source(pm: pluggy.PluginManager, source: Source) -> FetchedImage:
     """Dispatch ``source`` to the appropriate provider and return bytes."""
     plugin = get_provider(pm, source.provider)
-    options = dict(source.options.model_dump())
+    # Try schema-validated options first; fall back to raw dump if the
+    # provider has no schema (backward-compatible).
+    validated = validate_provider_options(pm, source)
+    options = validated if validated is not None else dict(source.options.model_dump())
     return _call_fetch(plugin, options)

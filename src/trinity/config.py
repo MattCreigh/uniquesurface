@@ -47,13 +47,33 @@ def _sudo_user_home() -> Path | None:
 
 
 def load_config(path: Path | None = None) -> Config:
-    """Load and validate the config file at ``path`` (default location)."""
+    """Load and validate the config file at ``path`` (default location).
+
+    After the pydantic schema validates the TOML, the selected provider's
+    options schema (if it declares one) validates ``surface.source.options``.
+    This catches option typos at config-load time (e.g. ``resoultion``
+    instead of ``resolution``) rather than at fetch time (3am timer).
+    """
     cfg_path = Path(path) if path is not None else paths.config_file()
     if not cfg_path.exists():
         raise FileNotFoundError(f"config file not found: {cfg_path}")
     with cfg_path.open("rb") as f:
         raw: dict[str, Any] = tomllib.load(f)
-    return Config.model_validate(raw)
+    cfg = Config.model_validate(raw)
+    # Validate provider options against the provider's declared schema.
+    _validate_provider_options_or_raise(cfg, cfg_path)
+    return cfg
+
+
+def _validate_provider_options_or_raise(cfg: Config, cfg_path: Path) -> None:
+    """Validate provider options; raise FileNotFoundError-like error on failure."""
+    from trinity.providers import make_plugin_manager, validate_provider_options
+
+    pm = make_plugin_manager()
+    try:
+        validate_provider_options(pm, cfg.surface.source)
+    except ValueError as exc:
+        raise ValueError(f"{cfg_path}: {exc}") from exc
 
 
 def load_config_from_string(toml_text: str) -> Config:

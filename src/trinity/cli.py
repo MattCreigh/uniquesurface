@@ -371,8 +371,12 @@ def provider_list() -> None:
 @provider.command("info")
 @click.argument("name")
 def provider_info(name: str) -> None:
-    """Show details about one provider."""
-    from trinity.providers import list_providers, make_plugin_manager
+    """Show details about one provider, including option schema."""
+    from trinity.providers import (
+        get_provider_options_schema,
+        list_providers,
+        make_plugin_manager,
+    )
 
     pm = make_plugin_manager()
     for info in list_providers(pm):
@@ -380,6 +384,23 @@ def provider_info(name: str) -> None:
             click.echo(f"name:        {info.name}")
             click.echo(f"description: {info.description}")
             click.echo(f"built-in:    {info.builtin}")
+            schema_cls = get_provider_options_schema(pm, name)
+            if schema_cls is not None:
+                click.echo("options:")
+                for field_name, field in schema_cls.model_fields.items():
+                    type_name = getattr(
+                        field.annotation, "__name__", str(field.annotation)
+                    )
+                    default = (
+                        field.default if field.default is not None else "(required)"
+                    )
+                    desc = field.description or ""
+                    click.echo(
+                        f"  {field_name:20s} {type_name:12s} "
+                        f"default={default!s:12s} {desc}"
+                    )
+            else:
+                click.echo("options:     (no schema declared — not validated)")
             return
     click.echo(f"no provider named {name!r}", err=True)
     sys.exit(2)

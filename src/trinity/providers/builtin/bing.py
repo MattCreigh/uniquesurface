@@ -19,6 +19,7 @@ from __future__ import annotations
 from typing import Any
 
 import httpx
+from pydantic import BaseModel, ConfigDict, Field
 
 from trinity.providers import FetchedImage, ProviderError
 
@@ -27,6 +28,10 @@ _METADATA_URL = "https://www.bing.com/HPImageArchive.aspx"
 # generous ceiling that still prevents an unbounded/malicious response
 # from exhausting memory.
 _MAX_IMAGE_BYTES = 50 * 1024 * 1024
+
+# Defaults used when fetch() is called directly (not via the schema-validated
+# pipeline). The schema in BingOptions is the source of truth for validation;
+# these are just the no-args defaults so direct tests work.
 _DEFAULT_OPTIONS: dict[str, Any] = {
     "mkt": "en-US",
     "resolution": "1920x1080",
@@ -35,22 +40,45 @@ _DEFAULT_OPTIONS: dict[str, Any] = {
 }
 
 
+class BingOptions(BaseModel):
+    """Validated options for the Bing provider."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    mkt: str = Field(
+        default="en-US",
+        description="Bing market code (e.g. en-US, en-GB, ja-JP).",
+    )
+    resolution: str = Field(
+        default="1920x1080",
+        description="Requested resolution (WxH).",
+        pattern=r"^\d+x\d+$",
+    )
+    index: int = Field(
+        default=0,
+        description="Day offset (0 = today, 1 = yesterday, …).",
+        ge=0,
+    )
+    timeout: float = Field(
+        default=30.0,
+        description="Per-request timeout in seconds.",
+        gt=0,
+        le=300,
+    )
+
+
 def fetch(options: dict[str, Any]) -> FetchedImage:
     """Fetch today's Bing Picture of the Day as JPEG bytes.
 
-    Raises :class:`ProviderError` for anything that goes wrong: invalid
-    options, network failures, non-2xx responses, unexpected metadata
-    shapes, and downloads exceeding the size cap.
+    Options are pre-validated by :class:`BingOptions` at config load
+    time; this function receives the validated dict.  Raises
+    :class:`ProviderError` for runtime failures: network errors,
+    non-2xx responses, unexpected metadata shapes, and downloads
+    exceeding the size cap.
     """
     opts = {**_DEFAULT_OPTIONS, **options}
-    try:
-        timeout = float(opts["timeout"])
-        index = int(opts["index"])
-    except (TypeError, ValueError) as exc:
-        raise ProviderError(
-            f"bing provider: 'timeout' and 'index' must be numeric "
-            f"(got timeout={opts['timeout']!r}, index={opts['index']!r})"
-        ) from exc
+    timeout = float(opts["timeout"])
+    index = int(opts["index"])
 
     params = {
         "format": "js",
