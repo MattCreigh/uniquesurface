@@ -6,6 +6,12 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed (2026-07-10 relicensing)
+
+- **License changed from PolyForm Noncommercial 1.0.0 to GPL-3.0-or-later.**
+  This is a sole-author relicense with no external contributors to clear.
+  The bundled Inter font remains under the SIL Open Font License 1.1.
+
 ### Changed (2026-07-10 deferred quality items)
 
 - Renamed `src/trinity/logging.py` to `src/trinity/logging_setup.py` to
@@ -25,7 +31,7 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed (2026-07-10 quality sweep)
 
-- Packaging: PEP 639 SPDX license expression (`PolyForm-Noncommercial-1.0.0`)
+- Packaging: PEP 639 SPDX license expression (now `GPL-3.0-or-later`)
   with `license-files`; version is now single-sourced from
   `trinity.__version__` via hatch; `py.typed` marker shipped; sdist now
   includes `LICENSE`, `CHANGELOG.md`, `CONTRIBUTING.md`, and `docs/`;

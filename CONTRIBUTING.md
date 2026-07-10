@@ -95,4 +95,4 @@ paths trinity writes to are added to `ReadWritePaths`.
 ## License
 
 By contributing, you agree that your contributions are licensed under the
-PolyForm Noncommercial 1.0.0 license.
+GPL-3.0-or-later license.

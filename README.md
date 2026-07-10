@@ -1,10 +1,10 @@
 <div align="center">
-  <h1>✨ trinity ✨</h1>
+  <h1>✨ Trinity ✨</h1>
   <p><strong>Unified Plasma 6 surface-set manager — desktop, lock screen, and SDDM login, in sync.</strong></p>
 
   [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
   [![KDE Plasma 6](https://img.shields.io/badge/KDE-Plasma%206-1d99f3.svg?logo=kde)](https://kde.org/plasma-desktop/)
-  [![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/License-PolyForm%20Noncommercial-yellow.svg)](LICENSE)
+  [![License: GPL v3](https://img.shields.io/badge/License-GPL%20v3-blue.svg)](LICENSE)
   [![CI](https://github.com/MattCreigh/trinity/actions/workflows/ci.yml/badge.svg)](https://github.com/MattCreigh/trinity/actions/workflows/ci.yml)
 </div>
 
@@ -193,7 +193,11 @@ PR process.
 
 ## 📜 License
 
-[PolyForm Noncommercial 1.0.0](LICENSE) — free for personal, non-commercial use.
+The trinity source code is licensed under [GPL-3.0-or-later](LICENSE).
+
+The bundled Inter font (`src/trinity/theme/fonts/Inter-Regular.ttf`) is
+licensed under the [SIL Open Font License 1.1](src/trinity/theme/fonts/OFL.txt)
+and is not subject to the GPL.
 
 ---
 
