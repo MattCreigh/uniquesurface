@@ -1,0 +1,42 @@
+# Plasma lockscreen LockScreenUi.qml descriptor.
+#
+# Plasma 6.0–6.7 layout: a ``Timer { id: fadeoutTimer; interval: <ms>;
+# ... }`` block controls how long the lock screen stays visible before
+# dimming.  trinity rewrites the interval to a user-configured
+# number of seconds * 1000 so the config can express the value in
+# seconds (a more intuitive unit) while the vendor file expects ms.
+#
+# The anchor regex tolerates any other properties and a single
+# ``onTriggered: { ... }`` body between ``id: fadeoutTimer`` and
+# ``interval:`` (the real vendor layout in Plasma 6).  The
+# ``{on_triggered}`` body in the regex is an inline non-capturing
+# alternation of "no braces" and "one balanced brace pair", which
+# is what allows the match to skip past ``onTriggered: { ... }``
+# reliably.
+#
+# ``value_template`` uses the standard ``re.sub`` back-reference form
+# (``\g<1>``) so the matched prefix is preserved and only the
+# numeric interval is replaced.
+#
+# String syntax
+# =============
+#
+# Patterns are TOML *double-quoted* strings so Python regex escapes
+# (``\s``, ``\n``, ``\\``, ...) pass through unchanged.  In a TOML
+# double-quoted string a literal backslash is written ``\\`` — that
+# two-character sequence becomes one backslash in the resulting
+# Python string, which is what the regex engine expects.
+
+name = "plasma_lockscreen_ui"
+description = "Plasma 6 lockscreen LockScreenUi.qml — fadeout timer interval"
+plasma = ">=6.0,<6.8"
+
+[[patches]]
+kind = "fadeout_timer"
+description = "Rewrite the fadeoutTimer interval (seconds → ms)."
+value_template = "\\g<1>{value}"
+
+[patches.anchor]
+pattern = "(Timer\\s*\\{\\s*id:\\s*fadeoutTimer\\b(?:[^{}]|\\{[^{}]*\\})*?interval:\\s*)\\d+"
+flags = ["DOTALL"]
+description = "Locates the fadeoutTimer interval literal, skipping the onTriggered body."

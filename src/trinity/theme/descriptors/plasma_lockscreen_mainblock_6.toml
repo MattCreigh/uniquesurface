@@ -1,0 +1,50 @@
+# Plasma lockscreen MainBlock.qml descriptor.
+#
+# Plasma 6.0–6.7 layout: the password box's ``Keys.onPressed`` handler
+# opens with a ``Key_Left`` user-switch branch, and the line that
+# follows is where trinity inserts the wake-keypress guard.  The
+# guard consumes a text-producing keypress that arrives while
+# ``lockScreenRoot.uiVisible`` is false, so the keypress that wakes
+# the lock screen is not also typed into the password field.
+#
+# ``remove_anchor`` matches the *inserted* guard block exactly as
+# ``apply_lock_tokens`` writes it (with the
+# ``// @trinity:suppress_wake_keypress`` marker comment as the
+# unmissable anchor).  This lets a re-apply with ``enable=false``
+# cleanly remove the guard without touching any other code in the
+# handler.
+#
+# ``insert_block`` uses a literal ``{indent}`` placeholder; the
+# apply path replaces it with the indentation of the anchor line so
+# the block lines up with the surrounding QML.
+#
+# String syntax
+# =============
+#
+# Patterns are TOML *double-quoted* strings so Python regex escapes
+# (``\s``, ``\n``, ``\\``, ...) pass through unchanged.  In a TOML
+# double-quoted string a literal backslash is written ``\\`` — that
+# two-character sequence becomes one backslash in the resulting
+# Python string, which is what the regex engine expects.
+
+name = "plasma_lockscreen_mainblock"
+description = "Plasma 6 lockscreen MainBlock.qml — wake-keypress guard"
+plasma = ">=6.0,<6.8"
+
+[[patches]]
+kind = "wake_guard"
+description = "Insert/remove the wake-keypress guard in the password box."
+insert_block = """{indent}if (!lockScreenRoot.uiVisible && event.text !== "") { // @trinity:suppress_wake_keypress
+{indent}    lockScreenRoot.uiVisible = true;
+{indent}    event.accepted = true;
+{indent}    return;
+{indent}}
+"""
+
+[patches.anchor]
+pattern = "(Keys\\.onPressed:\\s*event\\s*=>\\s*\\{\\n)([ \\t]*)(?=if \\(event\\.key === Qt\\.Key_Left)"
+description = "Anchors on the vendor handler's opening brace and the Key_Left branch."
+
+[patches.remove_anchor]
+pattern = "[ \\t]*if \\(!lockScreenRoot\\.uiVisible[^\\n]*// @trinity:suppress_wake_keypress\\n(?:[^\\n]*\\n){3}[ \\t]*\\}\\n"
+description = "Matches the inserted guard block so a re-apply with enable=false can remove it."

@@ -18,7 +18,19 @@ import structlog
 
 
 def configure_logging(level: str = "INFO") -> None:
-    """Configure structlog to emit JSON to stdout."""
+    """Configure structlog to emit JSON to stdout.
+
+    ``cache_logger_on_first_use=False`` is critical: with it set to
+    ``True`` (structlog's default), a module-level ``_log =
+    get_logger(__name__)`` *caches* the unconfigured stdlib-fallback
+    state the first time it is used (which happens before the CLI
+    entry point calls :func:`configure_logging`), and every later
+    call on that same proxy then re-uses the cached stdlib logger —
+    which rejects arbitrary keyword arguments like ``hint=`` with a
+    ``TypeError: Logger._log() got an unexpected keyword argument
+    'hint'``.  This bites every pre-existing ``_log.warning(...,
+    hint=...)`` call.  We resolve the proxy on every call instead.
+    """
     log_level = getattr(logging, level.upper(), logging.INFO)
     logging.basicConfig(
         format="%(message)s",
@@ -38,7 +50,7 @@ def configure_logging(level: str = "INFO") -> None:
         wrapper_class=structlog.make_filtering_bound_logger(log_level),
         context_class=dict,
         logger_factory=structlog.PrintLoggerFactory(),
-        cache_logger_on_first_use=True,
+        cache_logger_on_first_use=False,
     )
 
 

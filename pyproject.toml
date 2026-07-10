@@ -28,6 +28,7 @@ dependencies = [
   "structlog>=24.1,<26",
   "pluggy>=1.5,<2",
   "click>=8.1,<9",
+  "packaging>=24,<26",  # PEP 440 / version range parsing for QML descriptors
 ]
 
 [project.urls]
@@ -63,9 +64,16 @@ path = "src/trinity/__init__.py"
 [tool.pytest.ini_options]
 minversion = "8.0"
 addopts = "-ra --strict-markers --strict-config"
+# Exclude ``tests/canary`` from the default run: the canary tests
+# require upstream QML files fetched by the GitHub Actions workflow
+# ``Upstream Canary`` (see .github/workflows/upstream-canary.yml)
+# and would skip (or fail to collect) without them.  The workflow
+# invokes ``pytest tests/canary/`` directly.
 testpaths = ["tests"]
+norecursedirs = ["tests/canary", ".hypothesis"]
 markers = [
   "integration: requires a real Plasma session (skipped if no DISPLAY/WAYLAND_DISPLAY)",
+  "canary: requires upstream QML files; run via the Upstream Canary workflow",
 ]
 
 [tool.coverage.run]

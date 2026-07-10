@@ -1,17 +1,14 @@
 <div align="center">
-
   <h1>✨ Trinity ✨</h1>
-
   <p><strong>Unified Plasma 6 surface-set manager — desktop, lock screen, and SDDM login, in sync.</strong></p>
 
   [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
   [![KDE Plasma 6](https://img.shields.io/badge/KDE-Plasma%206-1d99f3.svg?logo=kde)](https://kde.org/plasma-desktop/)
   [![License: GPL v3](https://img.shields.io/badge/License-GPL%20v3-blue.svg)](LICENSE)
   [![CI](https://github.com/MattCreigh/trinity/actions/workflows/ci.yml/badge.svg)](https://github.com/MattCreigh/trinity/actions/workflows/ci.yml)
+  [![Upstream Canary](https://github.com/MattCreigh/trinity/actions/workflows/upstream-canary.yml/badge.svg)](https://github.com/MattCreigh/trinity/actions/workflows/upstream-canary.yml)
 
 </div>
-
-
 
 > [!NOTE]
 > **AI-Assisted Development**

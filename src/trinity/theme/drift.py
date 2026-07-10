@@ -19,6 +19,7 @@ import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from trinity.manifest import sha256_bytes, sha256_file
 from trinity.theme import extract
@@ -27,6 +28,9 @@ from trinity.theme.qml_patch import (
     _WAKE_GUARD_BLOCK_RE,
     HEADER_LINE,
 )
+
+if TYPE_CHECKING:
+    from trinity.theme.descriptors import PlasmaVersion
 
 _MARKER_START = "/* @trinity:start */"
 _MARKER_END = "/* @trinity:end */"
@@ -90,7 +94,12 @@ def strip_sentinels(text: str) -> str:
 # Property names whose values trinity rewrites intentionally. Listed as
 # a module-level constant so the normaliser and the apply path share
 # the same set.
-_MANAGED_PROPS: tuple[str, ...] = (
+#
+# As of Phase 4, the *authoritative* source is the descriptor TOML for
+# the target file.  This tuple is a fallback for the case where no
+# descriptor matches the current Plasma version (CI, containerised
+# runs, no ``plasmashell`` on PATH).
+_MANAGED_PROPS_FALLBACK: tuple[str, ...] = (
     "fontFamily",
     "fontWeight",
     "passwordCharacter",
@@ -98,7 +107,54 @@ _MANAGED_PROPS: tuple[str, ...] = (
 )
 
 
-def normalize_managed_values(text: str) -> str:
+def _managed_props_for(name: str) -> tuple[str, ...]:
+    """Return the set of font/theme property names trinity manages for
+    ``name``, sourced from the matching descriptor when one is found.
+
+    Falls back to :data:`_MANAGED_PROPS_FALLBACK` when the descriptor
+    system has no match for the current Plasma version.
+    """
+    from trinity.theme.descriptors import _all as _all_descriptors
+    from trinity.theme.descriptors import _specifier_matches
+
+    plasma = _detect_plasma_version_cached()
+    version = plasma.version
+    if version is not None:
+        for d in _all_descriptors():
+            if d.name != name:
+                continue
+            if not _specifier_matches(d, version):
+                continue
+            props: list[str] = []
+            for p in d.patches:
+                if p.kind != "font_property":
+                    continue
+                for fp in p.font_properties:
+                    props.append(fp.name)
+            if props:
+                return tuple(props)
+    return _MANAGED_PROPS_FALLBACK
+
+
+def _detect_plasma_version_cached() -> PlasmaVersion:
+    """Cache the Plasma version per process to avoid re-running
+    ``plasmashell --version`` for every managed property lookup."""
+    global _PLASMA_CACHE
+    if _PLASMA_CACHE is None:
+        from trinity.theme.descriptors import detect_plasma_version
+
+        _PLASMA_CACHE = detect_plasma_version()
+    # ``_PLASMA_CACHE`` is typed ``Any`` because it's set lazily; the
+    # branch above guarantees it's a ``PlasmaVersion`` here.
+    assert _PLASMA_CACHE is not None
+    result: PlasmaVersion = _PLASMA_CACHE
+    return result
+
+
+_PLASMA_CACHE: Any = None  # PlasmaVersion | None; lazily populated
+
+
+def normalize_managed_values(text: str, *, target_name: str | None = None) -> str:
     """Normalise the values trinity intentionally rewrites to a placeholder.
 
     Applies three normalisations, in order:
@@ -115,8 +171,17 @@ def normalize_managed_values(text: str) -> str:
     Used only when computing the drift hash, so a vanilla
     ``extract()`` round-trip does not corrupt the stored pristine
     baseline with placeholder text.
+
+    ``target_name`` is the logical name of the vendor file being
+    normalised (e.g. ``"sddm_login"``).  When provided, the set of
+    managed property names is sourced from the matching descriptor;
+    otherwise the fallback list is used.
     """
-    for prop in _MANAGED_PROPS:
+    if target_name is None:
+        props = _MANAGED_PROPS_FALLBACK
+    else:
+        props = _managed_props_for(target_name)
+    for prop in props:
         text = re.sub(
             r"((?:readonly\s+)?property\s+string\s+"
             + re.escape(prop)
@@ -129,15 +194,22 @@ def normalize_managed_values(text: str) -> str:
     return text
 
 
-def on_disk_stripped_hash(vendor_path: Path) -> str | None:
+def on_disk_stripped_hash(vendor_path: Path, *, name: str | None = None) -> str | None:
     """SHA-256 of the on-disk file with sentinels stripped and managed
     values normalised, ready for comparison against the (also normalised)
     stored pristine.
+
+    ``name`` is the logical target name (e.g. ``"sddm_login"``); when
+    provided, the descriptor for the current Plasma version determines
+    the set of managed properties.  When omitted, the fallback list
+    is used (suitable for tests that bypass the descriptor system).
     """
     if not vendor_path.is_file():
         return None
     text = vendor_path.read_text(encoding="utf-8", errors="replace")
-    stripped = normalize_managed_values(strip_sentinels(text)).encode("utf-8")
+    stripped = normalize_managed_values(strip_sentinels(text), target_name=name).encode(
+        "utf-8"
+    )
     return sha256_bytes(stripped)
 
 
@@ -156,15 +228,15 @@ def check(
     pristine_bytes = extract.read_pristine(name)
     if pristine_bytes is None:
         pristine_sha = None
-        on_disk_sha = on_disk_stripped_hash(vendor_path)
+        on_disk_sha = on_disk_stripped_hash(vendor_path, name=name)
         matches = False
     else:
         pristine_text = pristine_bytes.decode("utf-8", errors="replace")
         # Pristine has no sentinels; apply the same value normalisation
         # to both sides so the comparison is structural, not value-based.
-        pristine_norm = normalize_managed_values(pristine_text)
+        pristine_norm = normalize_managed_values(pristine_text, target_name=name)
         pristine_sha = sha256_bytes(pristine_norm.encode("utf-8"))
-        on_disk_sha = on_disk_stripped_hash(vendor_path)
+        on_disk_sha = on_disk_stripped_hash(vendor_path, name=name)
         matches = pristine_sha == on_disk_sha
     return DriftReport(
         name=name,

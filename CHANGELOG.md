@@ -6,6 +6,46 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added (Phase 4 — data-driven patch descriptors + upstream canary CI)
+
+- The QML anchor regexes (managed font properties, fadeout-timer
+  interval, wake-keypress guard) and the managed-property lists are
+  now sourced from packaged TOML data files in
+  `src/trinity/theme/descriptors/`, validated at load time against a
+  pydantic schema. A malformed packaged descriptor is a bug and
+  fails loudly at module import. A new descriptor file for a future
+  Plasma layout can be added without a code change.
+- Plasma version detection: `plasmashell --version` is parsed
+  defensively (cached per run) and used to select the matching
+  descriptor. Missing binary → unknown → skip token patching with a
+  structured "theme tokens unsupported on Plasma X.Y" status in
+  `apply`/`doctor` output. `$TRINITY_PLASMA_VERSION` env override is
+  honoured for testing.
+- Post-patch `qmllint` validation: after writing a patched QML file,
+  `qmllint` is run (if available, 5 s timeout). On lint failure the
+  file is rolled back to its pristine state via the manifest
+  machinery and the failure is surfaced as a plan line; other
+  surfaces (SDDM theme.conf, desktop/lock backends) still apply.
+  Availability: `qml6-qttools` (Debian/Neon), `qt6-qtdeclarative-devel`
+  (Fedora), `qt6-declarative` (Arch).
+- Upstream Canary CI workflow (`.github/workflows/upstream-canary.yml`):
+  weekly + manual dispatch, fetches the current Breeze SDDM and
+  Plasma lockscreen QML from KDE invent, then runs
+  `tests/canary/test_descriptor_anchors.py` which asserts every
+  descriptor anchor still matches upstream. A failure is a red badge
+  in README, not a release blocker — it surfaces an upcoming QML
+  breakage so a new descriptor file can be added before the release
+  lands.
+- Tests: 27 new cases (18 descriptor loader + selection + version
+  detection, 9 qmllint helper). Total 218 pass, 78.48% coverage.
+- `logging_setup.configure_logging` now uses
+  `cache_logger_on_first_use=False` so module-level `_log` aliases
+  created before `configure_logging` is called (e.g. during test
+  collection) re-resolve to structlog on first use rather than caching
+  the unconfigured stdlib fallback — this was the root cause of a
+  recurring `TypeError: Logger._log() got an unexpected keyword
+  argument 'hint'` in tests.
+
 ### Added (Phase 3 — generic JSON-API provider + shared SSRF-hardened HTTP)
 
 - New `json-api` built-in provider. Config-driven recipe that GETs a

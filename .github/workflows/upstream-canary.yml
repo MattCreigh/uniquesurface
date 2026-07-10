@@ -1,0 +1,86 @@
+name: Upstream Canary
+
+# Weekly + manual dispatch.  Fetches the current upstream QML files
+# trinity patches (Breeze SDDM theme + Plasma lockscreen) and runs the
+# descriptor canary tests against them.  A failure = red badge, not
+# a release blocker — it surfaces an upcoming breakage early.
+#
+# The badge in README.md links to this workflow; a green badge means
+# the descriptors still match the upstream source.  When a Plasma
+# release renames or moves a property the canary fails and the
+# maintainers can add a new descriptor file (see
+# src/trinity/theme/descriptors/) before the release lands.
+
+on:
+  schedule:
+    # 02:30 UTC on Mondays — early enough that fixing before the
+    # work week starts is realistic.
+    - cron: "30 2 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  canary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          python-version: "3.12"
+
+      - name: Install dependencies (locked)
+        run: uv sync --locked --group test
+
+      - name: Fetch upstream QML files
+        run: |
+          mkdir -p canary/upstream
+          # Breeze SDDM theme — Login.qml lives in the breeze theme.
+          # The SDDM themes ship in the `sddm` upstream repo's
+          # data/themes/ directory; we pin the breeze subdirectory.
+          # KDE invent: invent.kde.org/plasma/plasma-workspace.
+          # raw URLs use the /-/raw/<branch>/<path> pattern.
+          curl -fsSL \
+            -o canary/upstream/sddm_login.qml \
+            "https://invent.kde.org/api/v4/projects/plasma%2Fsddm-theme-breeze/repository/files/Login.qml/raw?ref=master" \
+            || echo "fetch-failed: sddm_login" >&2
+
+          # Plasma lockscreen QML — lives in plasma-workspace's
+          # lookandfeel package source.
+          curl -fsSL \
+            -o canary/upstream/plasma_lockscreen_mainblock.qml \
+            "https://invent.kde.org/api/v4/projects/plasma%2Fplasma-workspace/repository/files/lookandfeel%2Forg.kde.breeze.desktop%2Fcontents%2Flockscreen%2FMainBlock.qml/raw?ref=master" \
+            || echo "fetch-failed: plasma_lockscreen_mainblock" >&2
+
+          curl -fsSL \
+            -o canary/upstream/plasma_lockscreen_ui.qml \
+            "https://invent.kde.org/api/v4/projects/plasma%2Fplasma-workspace/repository/files/lookandfeel%2Forg.kde.breeze.desktop%2Fcontents%2Flockscreen%2FLockScreenUi.qml/raw?ref=master" \
+            || echo "fetch-failed: plasma_lockscreen_ui" >&2
+
+          ls -l canary/upstream/ || true
+
+      - name: Run canary tests
+        env:
+          # Point the canary tests at the fetched upstream files.
+          CANARY_UPSTREAM_DIR: canary/upstream
+          # Pretend the current Plasma version is the supported one.
+          TRINITY_PLASMA_VERSION: "6.5.0"
+        run: uv run pytest tests/canary/ -q --tb=short
+
+      - name: Report status
+        if: always()
+        run: |
+          echo "## Upstream Canary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ job.status }}" = "success" ]; then
+            echo "✅ All descriptor anchors still match upstream QML." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ Some descriptor anchors failed to match. See logs." >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Add a new descriptor file in src/trinity/theme/descriptors/" >> $GITHUB_STEP_SUMMARY
+            echo "with a higher plasma floor (e.g. \`plasma = \">=6.8,<7.0\"\`) for the new layout." >> $GITHUB_STEP_SUMMARY
+          fi

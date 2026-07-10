@@ -268,12 +268,19 @@ def apply_to_surfaces(
                 plan.append(f"patch QML {name} ({vendor_path}) with font/theme tokens")
     else:
         from trinity.theme import drift
+        from trinity.theme.descriptors import (
+            detect_plasma_version,
+        )
+        from trinity.theme.descriptors import (
+            select as select_descriptor,
+        )
         from trinity.theme.qml_patch import (
             FontPatch,
             LockPatch,
             apply_font_tokens,
             apply_lock_tokens,
         )
+        from trinity.theme.qmllint import lint_file as qmllint_lint_file
 
         font_patch = FontPatch(
             family=expanded.surface.fonts.family,
@@ -286,8 +293,35 @@ def apply_to_surfaces(
             suppress_wake_keypress=expanded.surface.lock.suppress_wake_keypress,
         )
 
+        plasma = detect_plasma_version()
+        if not plasma.known:
+            plan.append(
+                "theme tokens: skipped (Plasma version unknown — "
+                "plasmashell --version not on PATH); tokens ignored"
+            )
+            _log.warning(
+                "theme_tokens_plasma_unknown",
+                hint=(
+                    "Install plasmashell or set $TRINITY_PLASMA_VERSION to a "
+                    "PEP 440 version string to enable QML patching."
+                ),
+            )
+            return plan
+
         for name, vendor_path in extract.DEFAULT_TARGETS:
             if not vendor_path.is_file():
+                continue
+            descriptor = select_descriptor(name, plasma)
+            if descriptor is None:
+                plan.append(
+                    f"QML backend '{name}': skipped (theme tokens "
+                    f"unsupported on Plasma {plasma.version_str})"
+                )
+                _log.info(
+                    "theme_tokens_unsupported",
+                    backend=name,
+                    plasma=plasma.version_str,
+                )
                 continue
             try:
                 # Handle template drift if any
@@ -318,6 +352,33 @@ def apply_to_surfaces(
                         patch=lock_patch,
                     )
                     plan.append(f"QML lock '{name}': {lmsg}")
+
+                # Post-patch qmllint validation: a QML syntax error
+                # introduced by a trinity patch would cause the SDDM
+                # greeter / lock screen to fall back to the built-in
+                # blue locker.  Fail closed: roll the patched bytes
+                # back via the manifest and surface the error.
+                lint = qmllint_lint_file(vendor_path)
+                if not lint.ok:
+                    from trinity.theme import extract as _extract
+
+                    pristine = _extract.read_pristine(name)
+                    if pristine is not None:
+                        write_tracked(manifest, vendor_path, pristine, mode=0o644)
+                    plan.append(
+                        f"QML backend '{name}' LINT FAILED; reverted to pristine"
+                    )
+                    if lint.timed_out:
+                        plan.append("  qmllint timed out (>5s)")
+                    elif lint.stderr.strip():
+                        first_line = lint.stderr.strip().splitlines()[0]
+                        plan.append(f"  qmllint: {first_line}")
+                    _log.warning(
+                        "qml_lint_failed",
+                        backend=name,
+                        stderr=lint.stderr,
+                        stdout=lint.stdout,
+                    )
             except drift.DriftError as exc:
                 if adopt_drift:
                     # Explicit consent: adopt the drifted (stripped)

@@ -1,0 +1,50 @@
+# SDDM Breeze Login.qml descriptor.
+#
+# Plasma 6.0–6.7: vendor file declares all four managed properties
+# (``fontFamily``, ``fontWeight``, ``passwordCharacter``,
+# ``clockFormat``) as ``readonly property string <name>: "<value>"``
+# at the top of the file.  The apply path rewrites the values in
+# place; the drift detector treats the same declarations as the
+# normalisation boundary.
+#
+# Plasma 6.8+ is a probe: a future release may rename or split
+# properties, in which case a new descriptor file (with a higher
+# ``plasma`` floor) supersedes this one without code changes.
+#
+# File format
+# ===========
+#
+# The descriptor fields (``name``, ``plasma``, ...) are top-level
+# TOML keys.  ``[[patches]]`` is a regular TOML array of tables.
+# The ``pattern`` and ``insert_block`` strings are TOML
+# *double-quoted* strings so the Python regex escapes (``\s``,
+# ``\n``, ...) pass through unchanged — the apply path compiles
+# them as raw regex patterns.
+
+name = "sddm_login"
+description = "SDDM Breeze Login.qml — Plasma 6.0–6.7"
+plasma = ">=6.0,<6.8"
+
+[[patches]]
+kind = "font_property"
+description = "Rewrite vendor property value literals in place."
+
+[[patches.font_properties]]
+name = "fontFamily"
+default = "DejaVu Sans"
+description = "Primary font family used on the greeter."
+
+[[patches.font_properties]]
+name = "fontWeight"
+default = "Normal"
+description = "Primary font weight (Normal, Light, Bold, ...)."
+
+[[patches.font_properties]]
+name = "passwordCharacter"
+default = "*"
+description = "Glyph used to mask the password field."
+
+[[patches.font_properties]]
+name = "clockFormat"
+default = "hh:mm"
+description = "QML Date format string for the clock display."

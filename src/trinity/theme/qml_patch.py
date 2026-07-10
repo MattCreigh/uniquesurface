@@ -28,6 +28,9 @@ from pathlib import Path
 
 from trinity.manifest import Manifest, sha256_bytes, write_tracked
 from trinity.theme import extract
+from trinity.theme.descriptors import (
+    detect_plasma_version,
+)
 
 # Sentinel markers; anything between them is replaced wholesale.
 SENTINEL_START = "/* @trinity:start */"
@@ -40,6 +43,47 @@ _FOOTER = f"\n{SENTINEL_END}\n"
 # pristine (which never has the header) does not, producing a
 # false-positive drift after every apply.
 HEADER_LINE = "// managed by trinity — do not edit"
+
+
+# --- Plasma-version-aware descriptor resolution -------------------------
+#
+# As of Phase 4 the QML anchor regexes below are *sourced* from the
+# descriptor TOML files in :mod:`trinity.theme.descriptors`.  They
+# remain re-exported under their original names so existing tests and
+# callers keep working.  The resolution is:
+#
+# 1. On import, we attempt to compile each regex from the descriptor
+#    that matches the *currently running* Plasma version (or, when
+#    detection fails, from any descriptor with an empty ``plasma``
+#    specifier — the wildcard fallback).
+# 2. If no descriptor matches, the resolution falls through to the
+#    hard-coded regexes below as a last-resort safety net.  This
+#    keeps a developer machine without ``plasmashell`` on PATH (CI,
+#    containers) functional.
+# 3. ``_reset_descriptor_cache_for_tests`` (below) drops the cache so
+#    tests that inject a fake descriptors directory see the change.
+
+
+def _fadeout_fallback_pattern() -> re.Pattern[str]:
+    return re.compile(
+        r"(Timer\s*\{\s*id:\s*fadeoutTimer\b(?:[^{}]|\{[^{}]*\})*?interval:\s*)\d+",
+        re.DOTALL,
+    )
+
+
+def _wake_anchor_fallback() -> re.Pattern[str]:
+    return re.compile(
+        r"(Keys\.onPressed:\s*event\s*=>\s*\{\n)"
+        r"([ \t]*)(?=if \(event\.key === Qt\.Key_Left)"
+    )
+
+
+def _wake_guard_block_fallback() -> re.Pattern[str]:
+    return re.compile(
+        r"[ \t]*if \(!lockScreenRoot\.uiVisible[^\n]*"
+        + re.escape(WAKE_GUARD_MARKER)
+        + r"\n(?:[^\n]*\n){3}[ \t]*\}\n"
+    )
 
 
 @dataclass(frozen=True)
@@ -64,6 +108,82 @@ class LockPatch:
 
     on_idle_dim_seconds: int
     suppress_wake_keypress: bool
+
+
+# --- Module-level alias resolution ---------------------------------------
+#
+# These were the regex constants tests reference directly.  They are now
+# resolved from descriptors on first access (cached per process) and
+# re-exported under the same names for backward compatibility.  New
+# code should call the descriptor functions directly (see below).
+def _resolve_anchor_for(
+    name: str, kind: str, *, field: str = "anchor"
+) -> re.Pattern[str] | None:
+    """Return the compiled regex for the given (name, kind) descriptor,
+    or ``None`` if no descriptor matches the current Plasma version."""
+    from trinity.theme.descriptors import _all as all_descriptors
+    from trinity.theme.descriptors import _specifier_matches
+
+    plasma = detect_plasma_version()
+    version = plasma.version
+    if version is None:
+        return None
+    for d in all_descriptors():
+        if d.name != name:
+            continue
+        if not _specifier_matches(d, version):
+            continue
+        for p in d.patches:
+            if p.kind != kind:
+                continue
+            anchor = getattr(p, field, None)
+            if anchor is None:
+                continue
+            compiled: re.Pattern[str] = anchor.compile()
+            return compiled
+    return None
+
+
+_FADEOUT_TIMER_INTERVAL_RE: re.Pattern[str] = (
+    _resolve_anchor_for("plasma_lockscreen_ui", "fadeout_timer")
+    or _fadeout_fallback_pattern()
+)
+_WAKE_HANDLER_ANCHOR_RE: re.Pattern[str] = (
+    _resolve_anchor_for("plasma_lockscreen_mainblock", "wake_guard")
+    or _wake_anchor_fallback()
+)
+_WAKE_GUARD_BLOCK_RE: re.Pattern[str] = (
+    _resolve_anchor_for(
+        "plasma_lockscreen_mainblock", "wake_guard", field="remove_anchor"
+    )
+    or _wake_guard_block_fallback()
+)
+
+
+def _reset_descriptor_cache_for_tests() -> None:
+    """Drop the descriptor cache so tests that injected a different
+    descriptor set see the change on the next ``_resolve_anchor_for``
+    call.  Also re-resolves the module-level alias constants so the
+    hardcoded-fallback vs. descriptor branch is observable in tests.
+    """
+    from trinity.theme.descriptors import _reset_cache_for_tests
+
+    _reset_cache_for_tests()
+    global _FADEOUT_TIMER_INTERVAL_RE, _WAKE_HANDLER_ANCHOR_RE, _WAKE_GUARD_BLOCK_RE
+    _FADEOUT_TIMER_INTERVAL_RE = (
+        _resolve_anchor_for("plasma_lockscreen_ui", "fadeout_timer")
+        or _fadeout_fallback_pattern()
+    )
+    _WAKE_HANDLER_ANCHOR_RE = (
+        _resolve_anchor_for("plasma_lockscreen_mainblock", "wake_guard")
+        or _wake_anchor_fallback()
+    )
+    _WAKE_GUARD_BLOCK_RE = (
+        _resolve_anchor_for(
+            "plasma_lockscreen_mainblock", "wake_guard", field="remove_anchor"
+        )
+        or _wake_guard_block_fallback()
+    )
 
 
 def _ensure_sentinels(text: str, block: str) -> str:
@@ -254,10 +374,10 @@ def remove_sentinels(*, name: str, vendor_path: Path, manifest: Manifest) -> str
 # layout in Plasma 6). The previous ``[^}]*?`` body stopped at the first
 # ``}`` — the opening brace of ``onTriggered: {`` — so the rewrite never
 # actually fired and the timer interval was effectively never patched.
-_FADEOUT_TIMER_INTERVAL_RE = re.compile(
-    r"(Timer\s*\{\s*id:\s*fadeoutTimer\b(?:[^{}]|\{[^{}]*\})*?interval:\s*)\d+",
-    re.DOTALL,
-)
+#
+# (As of Phase 4 the actual compiled pattern is sourced from the
+# descriptor TOML via ``_resolve_anchor_for`` above.  This comment
+# documents the original semantics the descriptor captures.)
 
 # suppress_wake_keypress: the password box in MainBlock.qml has
 # ``focus: true``, so its ``Keys.onPressed`` attached handler (default
@@ -270,18 +390,31 @@ _FADEOUT_TIMER_INTERVAL_RE = re.compile(
 # never touched. ``lockScreenRoot`` resolves via the QML context chain
 # from the instantiating LockScreenUi.qml document.
 WAKE_GUARD_MARKER = "// @trinity:suppress_wake_keypress"
-_WAKE_HANDLER_ANCHOR_RE = re.compile(
-    r"(Keys\.onPressed:\s*event\s*=>\s*\{\n)"
-    r"([ \t]*)(?=if \(event\.key === Qt\.Key_Left)"
-)
-_WAKE_GUARD_BLOCK_RE = re.compile(
-    r"[ \t]*if \(!lockScreenRoot\.uiVisible[^\n]*"
-    + re.escape(WAKE_GUARD_MARKER)
-    + r"\n(?:[^\n]*\n){3}[ \t]*\}\n"
-)
 
 
 def _wake_guard_block(indent: str) -> str:
+    """Render the wake-keypress guard block at the given indentation.
+
+    Sourced from the wake_guard descriptor's ``insert_block`` template
+    when a matching descriptor is found; falls back to the original
+    hard-coded block when no descriptor matches the current Plasma
+    version (CI, containerised runs).
+    """
+    from trinity.theme.descriptors import _all as _all_descriptors
+    from trinity.theme.descriptors import _specifier_matches
+
+    plasma = detect_plasma_version()
+    version = plasma.version
+    if version is not None:
+        for d in _all_descriptors():
+            if d.name != "plasma_lockscreen_mainblock":
+                continue
+            if not _specifier_matches(d, version):
+                continue
+            for p in d.patches:
+                if p.kind != "wake_guard":
+                    continue
+                return p.insert_block.replace("{indent}", indent)
     inner = indent + "    "
     return (
         f'{indent}if (!lockScreenRoot.uiVisible && event.text !== "") '
