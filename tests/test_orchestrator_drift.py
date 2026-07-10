@@ -7,11 +7,20 @@ from unittest.mock import patch
 
 import pytest
 
-from usurface import paths
-from usurface.manifest import Manifest
-from usurface.orchestrator import apply_to_surfaces
-from usurface.schema import Behaviour, Config, Fonts, Login, Lock, Source, SourceOptions, Surface
-from usurface.theme import extract
+from trinity import paths
+from trinity.manifest import Manifest
+from trinity.orchestrator import apply_to_surfaces
+from trinity.schema import (
+    Behaviour,
+    Config,
+    Fonts,
+    Lock,
+    Login,
+    Source,
+    SourceOptions,
+    Surface,
+)
+from trinity.theme import extract
 
 
 def _make_config(tmp_path: Path) -> Config:
@@ -54,7 +63,7 @@ def test_drifted_qml_file_is_skipped_while_others_apply(
     monkeypatch.setattr(extract, "DEFAULT_TARGETS", targets)
 
     # Stub the provider fetch so we don't hit the network.
-    from usurface.providers import FetchedImage
+    from trinity.providers import FetchedImage
 
     fake_img = FetchedImage(
         data=b"\x89PNG\r\n\x1a\n" + b"\x00" * 32,
@@ -63,7 +72,7 @@ def test_drifted_qml_file_is_skipped_while_others_apply(
     )
 
     # Make handle_drift raise DriftError for the FIRST file only.
-    from usurface.theme import drift
+    from trinity.theme import drift
 
     real_handle_drift = drift.handle_drift
     call_count = {"n": 0}
@@ -84,9 +93,9 @@ def test_drifted_qml_file_is_skipped_while_others_apply(
 
     # Pillow needs a real image; stub verify_image to return the bytes.
     with (
-        patch("usurface.orchestrator.fetch_wallpaper", return_value=fake_img),
-        patch("usurface.orchestrator.verify_image", return_value=fake_img.data),
-        patch("usurface.theme.drift.handle_drift", side_effect=flaky_handle_drift),
+        patch("trinity.orchestrator.fetch_wallpaper", return_value=fake_img),
+        patch("trinity.orchestrator.verify_image", return_value=fake_img.data),
+        patch("trinity.theme.drift.handle_drift", side_effect=flaky_handle_drift),
     ):
         m = Manifest(tmp_path / "manifest.jsonl")
         plan = apply_to_surfaces(
@@ -104,6 +113,7 @@ def test_drifted_qml_file_is_skipped_while_others_apply(
     applied = [line for line in plan if "applied" in line and "QML" in line]
     # They skip (no managed properties) but are still attempted, not aborted.
     assert len(applied) >= 2
+
 
 def test_adopt_drift_adopts_and_patches(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -126,8 +136,8 @@ def test_adopt_drift_adopts_and_patches(
         )
     monkeypatch.setattr(extract, "DEFAULT_TARGETS", targets)
 
-    from usurface.providers import FetchedImage
-    from usurface.theme import drift
+    from trinity.providers import FetchedImage
+    from trinity.theme import drift
 
     fake_img = FetchedImage(
         data=b"\x89PNG\r\n\x1a\n" + b"\x00" * 32,
@@ -150,9 +160,9 @@ def test_adopt_drift_adopts_and_patches(
         return real_handle(name, vendor_path)
 
     with (
-        patch("usurface.orchestrator.fetch_wallpaper", return_value=fake_img),
-        patch("usurface.orchestrator.verify_image", return_value=fake_img.data),
-        patch("usurface.theme.drift.handle_drift", side_effect=flaky),
+        patch("trinity.orchestrator.fetch_wallpaper", return_value=fake_img),
+        patch("trinity.orchestrator.verify_image", return_value=fake_img.data),
+        patch("trinity.theme.drift.handle_drift", side_effect=flaky),
     ):
         m = Manifest(tmp_path / "manifest.jsonl")
         plan = apply_to_surfaces(

@@ -5,7 +5,7 @@ from __future__ import annotations
 import subprocess
 from unittest.mock import patch
 
-from usurface.backends import _kconfig
+from trinity.backends import _kconfig
 
 
 def _fake_completed(

@@ -1,7 +1,7 @@
 # Configuration Reference
 
-The user configuration lives at `~/.config/usurface/config.toml` (or
-`$XDG_CONFIG_HOME/usurface/config.toml`). It is strict: any unknown key
+The user configuration lives at `~/.config/trinity/config.toml` (or
+`$XDG_CONFIG_HOME/trinity/config.toml`). It is strict: any unknown key
 raises a validation error at load time.
 
 ## Top-level structure
@@ -28,7 +28,7 @@ on_idle_dim_seconds = 10
 
 [surface.behaviour]  # optional, defaults shown
 shared_dir = "/usr/local/share/wallpapers"
-user_dir   = "~/.local/state/usurface"
+user_dir   = "~/.local/state/trinity"
 ```
 
 ## `[surface.source]`
@@ -97,6 +97,6 @@ Tokens applied to the Plasma lock screen (`LockScreenUi.qml`).
 File layout.
 
 - `shared_dir`: directory visible to the SDDM user. Created by
-  `usurface install` with root; the daily POTD is copied here.
+  `trinity install` with root; the daily POTD is copied here.
 - `user_dir`: per-user canonical copy directory. The latest wallpaper
   is always written here first; the shared copy follows.

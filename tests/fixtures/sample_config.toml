@@ -23,4 +23,4 @@ suppress_wake_keypress = true
 
 [surface.behaviour]
 shared_dir = "/usr/local/share/wallpapers"
-user_dir = "~/.local/state/usurface"
+user_dir = "~/.local/state/trinity"

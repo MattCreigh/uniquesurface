@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from usurface.backends.login import LoginBackend
-from usurface.manifest import Manifest
+from trinity.backends.login import LoginBackend
+from trinity.manifest import Manifest
 
 
 @pytest.fixture
@@ -19,7 +19,7 @@ def fake_theme_conf(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         "[General]\ntype=image\nbackground=/old/path.jpg\n",
         encoding="utf-8",
     )
-    monkeypatch.setattr("usurface.backends.login._THEME_CONF_PATH", conf)
+    monkeypatch.setattr("trinity.backends.login._THEME_CONF_PATH", conf)
     return conf
 
 
@@ -29,7 +29,7 @@ def test_login_appends_when_no_background_line(
     conf = tmp_path / "breeze" / "theme.conf"
     conf.parent.mkdir(parents=True)
     conf.write_text("[General]\ntype=image\n", encoding="utf-8")
-    monkeypatch.setattr("usurface.backends.login._THEME_CONF_PATH", conf)
+    monkeypatch.setattr("trinity.backends.login._THEME_CONF_PATH", conf)
 
     backend = LoginBackend()
     target = tmp_path / "wp.jpg"
@@ -71,7 +71,7 @@ def test_login_skips_when_theme_conf_missing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     missing = tmp_path / "does-not-exist.conf"
-    monkeypatch.setattr("usurface.backends.login._THEME_CONF_PATH", missing)
+    monkeypatch.setattr("trinity.backends.login._THEME_CONF_PATH", missing)
     backend = LoginBackend()
     plan = backend.dry_run_plan(tmp_path / "wp.jpg")
     assert plan and plan[0].startswith("#")

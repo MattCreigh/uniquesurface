@@ -1,4 +1,4 @@
-# PLAN: `uniquesurface` — Unified Plasma 6 Surface Set Manager
+# PLAN: `trinity` — Unified Plasma 6 Surface Set Manager
 
 > **Audience.** A future Claude/agent instance. Treat this document as the
 > authoritative brief. Do not start implementation without reading it end to
@@ -9,7 +9,7 @@
 
 ## 1. Goals (in scope)
 
-1. **One tool, three surfaces.** A single CLI (`usurface`) and single
+1. **One tool, three surfaces.** A single CLI (`trinity`) and single
    configuration file that simultaneously drive:
    - Desktop wallpaper (Plasma shell `Containment` wallpaper plugin)
    - Lock screen wallpaper (kscreenlocker / `~/.config/kscreenlockerrc`)
@@ -33,24 +33,24 @@
      fonts are intentionally avoided because the SDDM/plasmalogin QML
      `FontLoader` handles static fonts more reliably.
    - **DECIDED** (per user, 2026-06-27): The font is installed into
-     `/usr/local/share/fonts/` at `usurface install` time, **requiring
+     `/usr/local/share/fonts/` at `trinity install` time, **requiring
      root** for that step only. A user-local install (`~/.local/share/fonts/`)
      is **not** used because the SDDM greeter runs as the `sddm` user and
-     cannot read another user's home directory. `usurface install` will
+     cannot read another user's home directory. `trinity install` will
      ask for `sudo` and fall back gracefully if declined (login screen
      keeps the system default font).
 
 4. **Day-rollover automation.** A user-level systemd timer refreshes the
    Picture-of-the-Day source once per day. Wired up automatically by
-   `usurface install`.
+   `trinity install`.
 
-5. **Single point of revert.** `usurface restore` reverts **every** surface
+5. **Single point of revert.** `trinity restore` reverts **every** surface
    to a pre-managed state in one command.
 
 6. **Differentiation.** Existing tools either cover only the desktop
    (`variety`, `nitrogen`) or are GUI-only weekend projects that patch
    vendor files without reversibility (`PlasmaWallpaperManager`).
-   `uniquesurface` is the CLI-first, provider-extensible, reversible,
+   `trinity` is the CLI-first, provider-extensible, reversible,
    systemd-automated option for users who want to *trust* their login +
    lock + desktop visuals.
 
@@ -72,12 +72,12 @@
 |---|------------|
 | C1 | **No shell scripts.** The implementation language is Python (with Rust optional for performance-critical paths). No `.sh` files in the repo or installed by the package. |
 | C2 | **`uv`-managed Python project.** Tooling standard: `uv` for venv, deps, lockfile, and `uv tool install` / `uvx` for global CLI. No `pip`, no `pipx`, no `pyproject.toml` `setuptools`-only flows. |
-| C3 | **No sudo required for normal use.** Wallpaper changes are user-config. Sudo is only required at `usurface install` time for: (a) copying the font to `/usr/local/share/fonts/`, (b) creating the plasmalogin-visible shared wallpaper directory (normally `/usr/local/share/wallpapers/`, or `/var/cache/usurface/wallpapers/` if `/usr/local/` is read-only), and (c) patching root-owned SDDM/Plasma QML files. All three are opt-in / explicit. Normal `usurface apply` never needs root. |
+| C3 | **No sudo required for normal use.** Wallpaper changes are user-config. Sudo is only required at `trinity install` time for: (a) copying the font to `/usr/local/share/fonts/`, (b) creating the plasmalogin-visible shared wallpaper directory (normally `/usr/local/share/wallpapers/`, or `/var/cache/trinity/wallpapers/` if `/usr/local/` is read-only), and (c) patching root-owned SDDM/Plasma QML files. All three are opt-in / explicit. Normal `trinity apply` never needs root. |
 | C4 | **plasmalogin must read the chosen wallpaper.** This means the wallpaper file at the SDDM path must be world-readable, owned by a user the plasmalogin service can traverse to. Existing setup uses `/usr/local/share/wallpapers/` for this. Plan keeps that path. |
 | C5 | **Atomic writes.** Every config file rewrite uses tmp-then-`replace` with fsync. Power-cut mid-write must not leave a corrupted plasma state. |
-| C6 | **Idempotent.** Running `usurface apply` twice with the same config produces the same on-disk state. Re-running `usurface install` is safe. |
+| C6 | **Idempotent.** Running `trinity apply` twice with the same config produces the same on-disk state. Re-running `trinity install` is safe. |
 | C7 | **Plasma 6 + Wayland only.** No Qt5 / X11 paths. Use `kreadconfig6`, `kwriteconfig6`, `qdbus6`. |
-| C8 | **Reversible.** Every file the package writes is registered in an append-only manifest at `~/.local/state/usurface/manifest.jsonl`. `usurface restore` reads it newest-first and replays inverse ops. |
+| C8 | **Reversible.** Every file the package writes is registered in an append-only manifest at `~/.local/state/trinity/manifest.jsonl`. `trinity restore` reads it newest-first and replays inverse ops. |
 
 ## 4. Current state inventory (as of 2026-06-27)
 
@@ -101,7 +101,7 @@
 
 ```
 ┌────────────────────────────────────────────────────────────────────┐
-│                       usurface (CLI entry)                         │
+│                       trinity (CLI entry)                         │
 └────────────────────────────────────────────────────────────────────┘
                                   │
    ┌───────────────────┬──────────┴─────────────┬───────────────────┐
@@ -130,22 +130,22 @@
                                   ▼
                   ┌──────────────────────────────────────────────────┐
                   │  state store                                     │
-                  │  ~/.local/state/usurface/                        │
+                  │  ~/.local/state/trinity/                        │
                   │  ├── manifest.jsonl   (append-only undo log)     │
                   │  ├── last_wallpaper.jpg                          │
                   │  └── last_config.toml                            │
                   └──────────────────────────────────────────────────┘
 ```
 
-**Data flow on `usurface apply`:**
+**Data flow on `trinity apply`:**
 
-1. Load + validate config from `~/.config/usurface/config.toml`
+1. Load + validate config from `~/.config/trinity/config.toml`
 2. Resolve source → fetch / pick image → write to
-   `~/.local/state/usurface/last_wallpaper.jpg` (atomic)
+   `~/.local/state/trinity/last_wallpaper.jpg` (atomic)
 3. Verify the resolved image with Pillow (decode, ensure non-empty,
    optionally strip EXIF), then mirror to
    `/usr/local/share/wallpapers/last_wallpaper.jpg` with mode `0644`
-   (if writable; else warn and require `sudo usurface share`)
+   (if writable; else warn and require `sudo trinity share`)
 4. Write desktop `appletsrc` entry — via `kwriteconfig6`
 5. Write `~/.config/kscreenlockerrc` — via `kwriteconfig6`
 6. Patch `/usr/share/sddm/themes/breeze/theme.conf` — via plain text edit,
@@ -163,7 +163,7 @@
 ### 6.1 Python (primary)
 
 - **Version:** 3.12+ (matches current system Python).
-- **Manager:** `uv`. Project layout: `src/usurface/`, `pyproject.toml`
+- **Manager:** `uv`. Project layout: `src/trinity/`, `pyproject.toml`
   declares the package, `uv` handles the venv.
 - **Key deps:**
   - `pydantic` — config schema, validation
@@ -182,16 +182,16 @@
 - Reserved for image processing if Pillow proves too slow on this laptop.
   The current daily job fetches + re-encodes a single 1920×1080 image —
   this is well within Pillow's capability. **DECIDED**: do not introduce
-  Rust in v1. The pyproject reserves the `usurface-core` optional extra
+  Rust in v1. The pyproject reserves the `trinity-core` optional extra
   in case a future Rust extension is needed.
 - If Rust is added later: a `rust/` workspace producing a
-  `usurface_core` Python extension via `pyo3` + `maturin`. Keep the
+  `trinity_core` Python extension via `pyo3` + `maturin`. Keep the
   interface identical.
 
 ### 6.3 Build / release
 
 - `uv build` produces wheel + sdist.
-- `uv tool install usurface` installs the CLI to `~/.local/bin/usurface`.
+- `uv tool install trinity` installs the CLI to `~/.local/bin/trinity`.
 - Tagging `v0.1.0` etc. via git tags. CHANGELOG.md maintained by hand
   until first release (Keep-a-Changelog format).
 
@@ -205,9 +205,9 @@ background_manager/
 ├── uv.lock                          (committed after first install)
 ├── .python-version                  (3.12)
 ├── src/
-│   └── usurface/
+│   └── trinity/
 │       ├── __init__.py
-│       ├── __main__.py              (python -m usurface)
+│       ├── __main__.py              (python -m trinity)
 │       ├── cli.py                   (click app: install, apply, restore, status)
 │       ├── config.py                (pydantic models, loader)
 │       ├── schema.py                (SurfaceSet, Source, FontTokens, etc.)
@@ -265,7 +265,7 @@ background_manager/
 
 ## 8. Configuration schema (the "surface set" data model)
 
-`~/.config/usurface/config.toml`:
+`~/.config/trinity/config.toml`:
 
 ```toml
 [surface]
@@ -301,10 +301,10 @@ suppress_wake_keypress = true   # consumes the first keypress after wake
 [surface.behaviour]
 # Where to place the wallpaper file.
 shared_dir = "/usr/local/share/wallpapers"   # world-readable, plasmalogin-visible
-user_dir   = "~/.local/state/usurface"       # per-user canonical copy
+user_dir   = "~/.local/state/trinity"       # per-user canonical copy
 ```
 
-Pydantic models in `src/usurface/schema.py` mirror this exactly. Any
+Pydantic models in `src/trinity/schema.py` mirror this exactly. Any
 unknown key raises a hard validation error at load time. This is
 intentionally strict — typos are common failure modes for TOML config.
 
@@ -316,9 +316,9 @@ the next phase with failing tests or uncommitted work.**
 ### Phase 0 — Repo skeleton (½ day)
 
 - Create `pyproject.toml`, `uv.lock`, `.python-version`, `README.md`.
-- Initialise `src/usurface/__init__.py` and a stub CLI that prints
-  `usurface 0.0.0`.
-- Run `uv sync`, `uv run usurface --help`. Commit.
+- Initialise `src/trinity/__init__.py` and a stub CLI that prints
+  `trinity 0.0.0`.
+- Run `uv sync`, `uv run trinity --help`. Commit.
 - **Done means:** `uv tool install -e .` works and the binary is on PATH.
 
 ### Phase 1 — Atomic file I/O + paths (½ day)
@@ -336,7 +336,7 @@ the next phase with failing tests or uncommitted work.**
 - `config.py` with `load_config(path)` / `dump_config(model, path)`.
 - Strict validation. Clear error messages.
 - Tests: invalid TOML, missing keys, wrong types, unknown provider.
-- **Done means:** `usurface config validate` exits 0 on a sample file, 1
+- **Done means:** `trinity config validate` exits 0 on a sample file, 1
   with a clear message on a broken file.
 
 ### Phase 3 — Provider registry (1 day)
@@ -349,13 +349,13 @@ the next phase with failing tests or uncommitted work.**
   or simple gradient.
 - `providers/registry.py`: load all built-ins + 3rd-party via entry points.
 - Tests: `respx` for httpx mocking. Snapshot image bytes.
-- **Done means:** `usurface fetch --provider bing --out /tmp/x.jpg` works
+- **Done means:** `trinity fetch --provider bing --out /tmp/x.jpg` works
   end-to-end.
 
 ### Phase 4 — Manifest store (½ day)
 
 - `manifest.py`: append-only JSONL at
-  `~/.local/state/usurface/manifest.jsonl`. Each line:
+  `~/.local/state/trinity/manifest.jsonl`. Each line:
   ```json
   {"ts": "...", "op": "write", "path": "...", "prev_sha256": "...", "new_sha256": "..."}
   ```
@@ -380,17 +380,17 @@ For each backend: implement writer + tests using a tmp HOME.
    - **theme.conf**: line-targeted regex edit. Preserve comments.
    - **Login.qml / MainBlock.qml / LockScreenUi.qml**: first-run uses
      diff against the pristine template; subsequent runs use sentinel
-     markers (`/* @usurface:start */` … `/* @usurface:end */`). See
+     markers (`/* @trinity:start */` … `/* @trinity:end */`). See
      §10.2. If the file has already been patched by hand, the migration
      helper must use the existing `.bak.*` files as the pristine
      baseline, not the current patched file.
-- **Done means:** on a test VM, `usurface apply` flips all three surfaces
+- **Done means:** on a test VM, `trinity apply` flips all three surfaces
   to a known colour and they all show it.
 
 ### Phase 6 — Font installation + template extraction (½ day)
 
 - `theme/font_install.py`: copy `Inter-Regular.ttf` (vendored) to
-  `/usr/local/share/fonts/usurface/Inter-Regular.ttf`, then run
+  `/usr/local/share/fonts/trinity/Inter-Regular.ttf`, then run
   `fc-cache -f`. Requires root; asks for `sudo`.
 - `theme/qml_patch.py`: first-run diff patch; subsequent runs use
   sentinel markers to replace font/theme tokens in `Login.qml`,
@@ -399,17 +399,17 @@ For each backend: implement writer + tests using a tmp HOME.
   marker region removed; save drift backups and re-extract from system.
 - `theme/extract.py`: read pristine vendor QML files from
   `/usr/share/sddm/themes/breeze/` and `/usr/share/plasma/shells/...` and
-  copy them into `~/.local/state/usurface/templates/`. Called by
-  `usurface install` and by `usurface qml-update-templates`.
+  copy them into `~/.local/state/trinity/templates/`. Called by
+  `trinity install` and by `trinity qml-update-templates`.
 - **Done means:** login screen visibly renders Inter instead of Lato and
   state-directory templates exist.
 
 ### Phase 7 — Systemd units (½ day)
 
 - `systemd/writer.py`: render `.service` + `.timer` from Jinja templates.
-- `usurface install` enables the timer with `systemctl --user`.
-- `usurface uninstall` disables + removes the unit files.
-- **Done means:** `systemctl --user list-timers` shows `usurface-pull.timer`.
+- `trinity install` enables the timer with `systemctl --user`.
+- `trinity uninstall` disables + removes the unit files.
+- **Done means:** `systemctl --user list-timers` shows `trinity-pull.timer`.
 
 ### Phase 8 — CLI wiring (1 day)
 
@@ -429,24 +429,24 @@ For each backend: implement writer + tests using a tmp HOME.
   mutation). `--dry-run` prints a human-readable table of planned ops
   including: source provider, resolved wallpaper path, config keys to write,
   root files to patch, and manifest entries to append.
-- **Done means:** `usurface --help` reads cleanly and every command has a
+- **Done means:** `trinity --help` reads cleanly and every command has a
   `--help`.
 
 ### Phase 9 — Migration helper + integration hardening (1 day)
 
-- `usurface migrate-from-shell`:
+- `trinity migrate-from-shell`:
   - Read `/usr/local/bin/bing-potd.sh` to detect the existing source.
   - Read `~/.config/kscreenlockerrc`, `appletsrc`, `theme.conf` to detect
     the current wallpaper paths.
-  - Generate a starter `~/.config/usurface/config.toml`.
+  - Generate a starter `~/.config/trinity/config.toml`.
   - Do NOT delete anything. Print a checklist.
-- `usurface doctor`:
+- `trinity doctor`:
   - Verify the shared wallpaper dir is world-readable.
   - Verify `fc-match Inter` resolves after font install.
   - Verify stored QML template hashes match the stripped on-disk files.
   - Verify the systemd timer is enabled and the manifest store exists.
-- **Done means:** the user can run `usurface migrate-from-shell` on this
-  box and get a valid config file, and `usurface doctor` exits 0 on a
+- **Done means:** the user can run `trinity migrate-from-shell` on this
+  box and get a valid config file, and `trinity doctor` exits 0 on a
   healthy install.
 
 ### Phase 10 — Hardening + docs (1 day)
@@ -467,12 +467,12 @@ weight), has complete Latin coverage, and is widely installed on
 developer machines. Vendoring the .ttf avoids a network dependency at
 install time.
 
-`usurface install` copies the vendored `Inter-Regular.ttf` to
-`/usr/local/share/fonts/usurface/Inter-Regular.ttf` and runs
+`trinity install` copies the vendored `Inter-Regular.ttf` to
+`/usr/local/share/fonts/trinity/Inter-Regular.ttf` and runs
 `fc-cache -f`. This step requires root because the SDDM greeter runs as
 the `sddm` user and cannot read fonts inside a regular user's home. If
 the user declines sudo, the install continues but the login screen falls
-back to the system default font; `usurface status` shows a warning.
+back to the system default font; `trinity status` shows a warning.
 
 If the user wants a different font later, the `surface.fonts.family`
 config token takes any installed family name — `fc-match <name>` is
@@ -485,23 +485,23 @@ There are two strategies:
 
 **Strategy A — diff-based patch.** Keep a pristine copy of the
 distro-shipped `Login.qml`, `MainBlock.qml`, `LockScreenUi.qml` in
-`src/usurface/theme/templates/` (extracted at package build time or
+`src/trinity/theme/templates/` (extracted at package build time or
 shipped verbatim). At apply time, produce a unified diff against the
 on-disk file. Apply the diff; if it fails, error out.
 
 **Strategy B — direct edit with sentinel markers.** Write
-`/* @usurface:start */ … /* @usurface:end */` blocks into the QML and
+`/* @trinity:start */ … /* @trinity:end */` blocks into the QML and
 replace only the inside. Requires writing markers into distro files (we'd
 need to patch them once).
 
 **DECIDED:** **Option C — hybrid template sourcing.**
 
 - At **build/package time**, ship a set of pristine QML templates in
-  `src/usurface/theme/templates/` extracted from the developer's current
+  `src/trinity/theme/templates/` extracted from the developer's current
   Plasma version. These act as a safe fallback.
-- At **`usurface install` time**, the CLI re-extracts fresh pristine
+- At **`trinity install` time**, the CLI re-extracts fresh pristine
   templates from the running system and stores them in
-  `~/.local/state/usurface/templates/`, preferring those over the shipped
+  `~/.local/state/trinity/templates/`, preferring those over the shipped
   copies. This keeps the templates in sync with the installed Plasma
   version without requiring a new package release.
 - At **apply time**, the backend uses the state-directory templates first,
@@ -509,17 +509,17 @@ need to patch them once).
   are missing.
 - **Strategy A** (diff against pristine template) is used for the very
   first patch. The very first successful patch writes Strategy B sentinel
-  markers (`/* @usurface:start */` … `/* @usurface:end */`) into the same
-  vendor files. All subsequent `usurface apply` operations use Strategy B
-  to replace only the marked region. The `usurface restore` command removes
+  markers (`/* @trinity:start */` … `/* @trinity:end */`) into the same
+  vendor files. All subsequent `trinity apply` operations use Strategy B
+  to replace only the marked region. The `trinity restore` command removes
   the markers and rewrites the file back to the pristine template content.
 
 **Template drift detection.** Before any patch, compute the SHA-256 of the
 on-disk file with the marker region stripped out. Compare it to the stored
 pristine template. If they differ:
-1. Save the current file as `<path>.usurface.drift.<ts>`.
+1. Save the current file as `<path>.trinity.drift.<ts>`.
 2. Re-extract a fresh pristine template from the running system and
-   update `~/.local/state/usurface/templates/`.
+   update `~/.local/state/trinity/templates/`.
 3. If the re-extracted template still does not match the stripped on-disk
    file, emit a hard error and refuse to patch. Do not silently skip
    font/theme changes.
@@ -531,7 +531,7 @@ introduce `templates/plasma-<major>.<minor>/` directories selected at
 runtime. This is explicitly deferred.
 
 The package cannot restart plasmalogin (it would log the user out).
-Resolution: `usurface apply` always emits an info-level message:
+Resolution: `trinity apply` always emits an info-level message:
 
 > Wallpaper applied. To see it on the login screen, **log out** (the SDDM
 > greeter caches theme files at startup).
@@ -543,25 +543,25 @@ first apply.
 
 Keep `/usr/local/share/wallpapers/` as the plasmalogin-visible location.
 
-- `usurface install --shared-dir` creates the directory as `root:root`
+- `trinity install --shared-dir` creates the directory as `root:root`
   0755. This requires sudo and is the only install-time root step besides
   the font copy.
-- Each `usurface apply` writes `last_wallpaper.jpg` to that directory
+- Each `trinity apply` writes `last_wallpaper.jpg` to that directory
   with mode `0644` and ownership matching the directory owner (normally
   `root:root`). If the user declines sudo for `install`, the directory is
   created under the running user with 0755 and the file is user-owned but
   world-readable (works on single-user systems, may fail plasmalogin
   visibility on multi-user systems).
 - On a system where `/usr/local/` is read-only, fall back to
-  `/var/cache/usurface/wallpapers/` and emit a clear warning. In that case
-  `usurface install` must be run with root to ensure the plasmalogin
-  user can traverse `/var/cache/usurface/`.
+  `/var/cache/trinity/wallpapers/` and emit a clear warning. In that case
+  `trinity install` must be run with root to ensure the plasmalogin
+  user can traverse `/var/cache/trinity/`.
 - The config token `surface.behaviour.shared_dir` is authoritative; the
   install step merely ensures it exists with sensible permissions.
 
 ### 10.4 Single source of truth for the shared wallpaper (DECIDED)
 
-The per-user canonical copy is `~/.local/state/usurface/last_wallpaper.jpg`.
+The per-user canonical copy is `~/.local/state/trinity/last_wallpaper.jpg`.
 The plasmalogin-visible copy in `shared_dir` is a **copy**, not a hardlink.
 Hardlinks save disk but break user-only wallpapers and complicate atomic
 replacement across filesystem boundaries. Copy is the v1 default.
@@ -576,7 +576,7 @@ also writes them and we need to round-trip safely.
 ### 10.6 Logging
 
 `structlog` → JSON → stdout → captured by systemd journal (`journalctl
---user -u usurface-pull.service`). No file logs unless the user opts
+--user -u trinity-pull.service`). No file logs unless the user opts
 in via `[logging]` config.
 
 ## 11. Testing strategy
@@ -600,8 +600,8 @@ in via `[logging]` config.
 | Channel | Command |
 |---|---|
 | From source (this dev) | `uv tool install /home/matt/Projects/background_manager` |
-| From GitHub (future) | `uv tool install git+https://github.com/<user>/usurface.git` |
-| From PyPI (future) | `uv tool install usurface` |
+| From GitHub (future) | `uv tool install git+https://github.com/<user>/trinity.git` |
+| From PyPI (future) | `uv tool install trinity` |
 | Debian/Ubuntu (future, optional) | `packaging/deb/` produces a `.deb` for KDE Neon. Out of scope for v1. |
 
 **No homebrew formula. No AUR. The target user is on KDE Neon.**
@@ -611,16 +611,16 @@ in via `[logging]` config.
 This is what the user will do *after* the package is at v0.1.0:
 
 1. `uv tool install /home/matt/Projects/background_manager`
-2. `usurface migrate-from-shell --dry-run` (review what will be detected)
-3. `usurface migrate-from-shell` (generates `~/.config/usurface/config.toml`)
+2. `trinity migrate-from-shell --dry-run` (review what will be detected)
+3. `trinity migrate-from-shell` (generates `~/.config/trinity/config.toml`)
    **Run this before any `apply` on a previously-patched system.** It
    captures the existing `.bak.*` QML files as the pristine baseline.
-   Without it, `usurface` would diff against the already-patched files.
-4. `usurface install` (installs font to `/usr/local/share/fonts/` and
+   Without it, `trinity` would diff against the already-patched files.
+4. `trinity install` (installs font to `/usr/local/share/fonts/` and
    creates `/usr/local/share/wallpapers/`; both require sudo. Systemd
    user units do not require sudo.)
-5. `usurface apply --dry-run` (review the planned file changes)
-6. `usurface apply` (writes everything; logs the "log out to see login screen" hint)
+5. `trinity apply --dry-run` (review the planned file changes)
+6. `trinity apply` (writes everything; logs the "log out to see login screen" hint)
 7. Visual check: lock screen (Super+L), desktop (Alt+Tab to look at it).
 8. Log out, back in. Check login screen.
 9. `sudo rm /usr/local/bin/bing-potd.sh /usr/local/bin/bing-potd.sh.bak`
@@ -632,7 +632,7 @@ This is what the user will do *after* the package is at v0.1.0:
 to them. The migration helper must treat those `.bak.*` files as the pristine
 templates, not the current patched files. If a `.bak.*` is missing, the helper
 must copy the current patched file as the baseline and emit a warning that
-`usurface restore` will restore to the current (already-modified) state, not to
+`trinity restore` will restore to the current (already-modified) state, not to
 vendor-original.
 
 The migration helper is *additive only*. It does not delete anything.
@@ -652,7 +652,7 @@ The migration helper is *additive only*. It does not delete anything.
 
 ### Open questions for the user (asked one at a time when reached)
 
-1. **Do we need a `usurface pause` to stop the timer temporarily?** A
+1. **Do we need a `trinity pause` to stop the timer temporarily?** A
    vacation mode. **Default:** not in v1.
 
 **Closed questions (locked in):**

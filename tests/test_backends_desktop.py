@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from usurface.backends.desktop import DesktopBackend
-from usurface.manifest import Manifest
+from trinity.backends.desktop import DesktopBackend
+from trinity.manifest import Manifest
 
 
 @pytest.fixture
@@ -24,7 +24,9 @@ def fake_kwriteconfig(monkeypatch: pytest.MonkeyPatch):
         calls.append(argv)
         return argv
 
-    def fake_kwriteconfig_nested(*, file, group_path, key, value, type_=None, dry_run=False):  # type: ignore[no-untyped-def]
+    def fake_kwriteconfig_nested(
+        *, file, group_path, key, value, type_=None, dry_run=False
+    ):  # type: ignore[no-untyped-def]
         argv = ["kwriteconfig6", "--file", str(file)]
         for g in group_path:
             argv += ["--group", g]
@@ -35,7 +37,7 @@ def fake_kwriteconfig(monkeypatch: pytest.MonkeyPatch):
         calls.append(argv)
         return argv
 
-    from usurface.backends import _kconfig
+    from trinity.backends import _kconfig
 
     monkeypatch.setattr(_kconfig, "kwriteconfig", fake_kwriteconfig)
     monkeypatch.setattr(_kconfig, "kwriteconfig_nested", fake_kwriteconfig_nested)
@@ -45,7 +47,7 @@ def fake_kwriteconfig(monkeypatch: pytest.MonkeyPatch):
 @pytest.fixture
 def fake_qdbus(monkeypatch: pytest.MonkeyPatch):
     calls: list[list[str]] = []
-    from usurface.backends import _kconfig
+    from trinity.backends import _kconfig
 
     def fake_qdbus(*, service, path, method, args=(), dry_run=False):  # type: ignore[no-untyped-def]
         argv = ["qdbus6", service, path, method, *args]
@@ -85,7 +87,11 @@ def test_desktop_apply_writes_expected_keys(
     # the desktop to the default image. Only nested containment writes
     # happen (none here because the appletsrc doesn't exist in the test
     # tmp XDG dir), plus the live evaluateScript D-Bus call.
-    flat_calls = [c for c in fake_kwriteconfig if c[3:5] == ["--group", "Containments"] and len(c) <= 7]
+    flat_calls = [
+        c
+        for c in fake_kwriteconfig
+        if c[3:5] == ["--group", "Containments"] and len(c) <= 7
+    ]
     assert flat_calls == []
 
     # The live apply uses the PlasmaShell evaluateScript D-Bus method on
@@ -114,7 +120,12 @@ def test_desktop_dry_run_plan(
     target_image.write_bytes(b"\xff\xd8\xff" + b"data")
     plan = DesktopBackend().dry_run_plan(target_image)
     # No flat [Containments] group in the plan — only nested + live apply.
-    assert not any(line.startswith("kwriteconfig6 --file") and "--group Containments --key" in line and "Wallpaper" not in line for line in plan)
+    assert not any(
+        line.startswith("kwriteconfig6 --file")
+        and "--group Containments --key" in line
+        and "Wallpaper" not in line
+        for line in plan
+    )
     # The live apply must use the evaluateScript D-Bus method on the real
     # Plasma 6 service. The old refreshWallpaper call does not exist.
     assert any("evaluateScript" in line for line in plan)
@@ -138,8 +149,7 @@ def test_desktop_apply_writes_nested_containment_group(
 
     # Pre-populate the appletsrc with a real containment structure.
     appletsrc = (
-        Path(os.environ["XDG_CONFIG_HOME"])
-        / "plasma-org.kde.plasma.desktop-appletsrc"
+        Path(os.environ["XDG_CONFIG_HOME"]) / "plasma-org.kde.plasma.desktop-appletsrc"
     )
     appletsrc.parent.mkdir(parents=True, exist_ok=True)
     appletsrc.write_text(

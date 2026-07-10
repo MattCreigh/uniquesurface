@@ -24,18 +24,18 @@ The legacy setup uses:
    anything):
 
    ```sh
-   usurface migrate-from-shell --dry-run
-   usurface migrate-from-shell
+   trinity migrate-from-shell --dry-run
+   trinity migrate-from-shell
    ```
 
    This detects `bing-potd.sh` and the existing systemd timer, and
-   writes `~/.config/usurface/config.toml`.
+   writes `~/.config/trinity/config.toml`.
 
 3. **Install the package** (this is the step that touches root-owned
    paths):
 
    ```sh
-   sudo usurface install
+   sudo trinity install
    ```
 
    This copies the Inter font into `/usr/local/share/fonts/`, creates
@@ -46,8 +46,8 @@ The legacy setup uses:
 4. **Apply the configuration**:
 
    ```sh
-   usurface apply --dry-run
-   usurface apply
+   trinity apply --dry-run
+   trinity apply
    ```
 
    The dry-run prints a table of every file that will be modified. The
@@ -74,13 +74,13 @@ The legacy setup uses:
 ## Why the migration must be done before `apply`
 
 The QML patcher uses a pristine template stored in
-`~/.local/state/usurface/templates/` as the source of truth for drift
-detection. If you run `usurface apply` on a system whose vendor QML
+`~/.local/state/trinity/templates/` as the source of truth for drift
+detection. If you run `trinity apply` on a system whose vendor QML
 files are already hand-patched (without running `migrate-from-shell`
 first), the patcher will compare the patched file against the freshly
 extracted "pristine" template and treat the existing patches as drift.
 This will fail the apply with a clear error message.
 
 `migrate-from-shell` records the existing state and ensures that
-`usurface install` re-extracts the actual vendor QML (not the patched
+`trinity install` re-extracts the actual vendor QML (not the patched
 files) so the pristine baseline is correct.

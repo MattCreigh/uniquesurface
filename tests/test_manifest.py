@@ -4,8 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-
-from usurface import manifest
+from trinity import manifest
 
 
 def test_append_creates_file_and_records_entry(tmp_path: Path) -> None:

@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to `uniquesurface` are documented here. The format is
+All notable changes to `trinity` are documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/) and this project
 adheres to [Semantic Versioning](https://semver.org/).
 
@@ -8,14 +8,14 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
-- Initial implementation of `usurface` CLI.
-- Atomic file writes (`usurface.atomic`).
-- TOML configuration schema (`usurface.schema`).
+- Initial implementation of `trinity` CLI.
+- Atomic file writes (`trinity.atomic`).
+- TOML configuration schema (`trinity.schema`).
 - Bing, file, and solid-colour providers via `pluggy`-style registry.
 - Third-party provider plugins are now loaded via the
-  `usurface.providers` setuptools entry-point group (previously only
+  `trinity.providers` setuptools entry-point group (previously only
   built-ins were registered, despite the docs advertising extension).
-- Append-only manifest with restore (`~/.local/state/usurface/manifest.jsonl`).
+- Append-only manifest with restore (`~/.local/state/trinity/manifest.jsonl`).
 - Desktop, lock, and login backends.
 - QML patching with sentinel markers + drift detection.
 - Systemd user timer for daily refresh.
@@ -28,14 +28,14 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
-- `usurface restore` now truncates the manifest after a successful
+- `trinity restore` now truncates the manifest after a successful
   restore: a full restore empties the log and prunes all snapshots; a
   partial restore (`--to <ts>`) keeps entries with `ts <= to` and prunes
   only the snapshots of reverted entries. A second restore is now a
   no-op rather than a replay.
 - QML drift is no longer silently adopted as the new pristine baseline.
   `handle_drift` now raises `DriftError`; the user must explicitly
-  consent via `usurface qml-update-templates` or `usurface apply
+  consent via `trinity qml-update-templates` or `trinity apply
   --adopt-drift`.
 - **Desktop wallpaper now actually updates and applies live.** The
   desktop backend previously wrote the flat `[Containments]` group
@@ -59,10 +59,10 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added (Appendix B)
 
-- `usurface apply --adopt-drift`: when passed, a drifted QML file is
+- `trinity apply --adopt-drift`: when passed, a drifted QML file is
   adopted as the new pristine baseline (after a timestamped backup) and
   patched. Without the flag, drifted files are skipped with a hint.
-- `usurface status` and `usurface doctor` now report any QML drift with
+- `trinity status` and `trinity doctor` now report any QML drift with
   the exact remediation commands.
 
 ### Fixed (Appendix A.4)
@@ -73,14 +73,14 @@ adheres to [Semantic Versioning](https://semver.org/).
   Only the real nested ``[Containments][<id>][Wallpaper][org.kde.image]
   [General] Image=`` groups are written, plus the live
   ``evaluateScript`` apply.
-- `usurface apply` now survives a manifest or shared directory owned by
+- `trinity apply` now survives a manifest or shared directory owned by
   another user (e.g. after a previous `sudo` run) without crashing.
 - Dry-run plan output now shows the real `kwriteconfig6 --group`
   argument sequence for nested INI groups.
 - Shared wallpaper ownership is restored to the invoking user after a
-  `sudo usurface apply`, so the daily user-mode timer stays writable.
+  `sudo trinity apply`, so the daily user-mode timer stays writable.
 - Manifest log and snapshots directory ownership are likewise restored
-  to the invoking user after a `sudo usurface apply`.
+  to the invoking user after a `sudo trinity apply`.
 - D-Bus live-update calls (`evaluateScript`, screen-saver reload) are
   routed through the invoking user's session bus when run via `sudo`.
 - `~` in `surface.behaviour.user_dir`/`shared_dir` expands to the
@@ -89,7 +89,7 @@ adheres to [Semantic Versioning](https://semver.org/).
   the provider's original suggestion.
 - The fadeoutTimer interval matcher tolerates other properties between
   `id: fadeoutTimer` and `interval:`.
-- **Display manager auto-reload:** when `sudo usurface apply` actually
+- **Display manager auto-reload:** when `sudo trinity apply` actually
   changes the SDDM/plasmalogin `theme.conf`, the display manager is
   automatically restarted so the new login wallpaper is visible on the
   next greeter launch. Previously the user had to do a full manual

@@ -6,10 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from usurface import paths
-from usurface.manifest import Manifest
-from usurface.theme import qml_patch
-
+from trinity import paths
+from trinity.manifest import Manifest
+from trinity.theme import qml_patch
 
 SAMPLE_QML = """\
 import QtQuick
@@ -36,7 +35,9 @@ def seeded_login(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return vendor
 
 
-def test_first_patch_replaces_property_values(seeded_login: Path, tmp_path: Path) -> None:
+def test_first_patch_replaces_property_values(
+    seeded_login: Path, tmp_path: Path
+) -> None:
     """The patcher rewrites the string literal of each existing
     ``property string <name>: "<old>"`` declaration in place — it must
     NOT append a ``pragma Singleton`` block (which is a syntax error in
@@ -116,7 +117,9 @@ def test_no_op_when_patch_unchanged(seeded_login: Path, tmp_path: Path) -> None:
     assert "no change" in msg
 
 
-def test_all_four_properties_replaced(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_all_four_properties_replaced(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A QML declaring all four managed properties (like Plasma's real
     LockScreenUi.qml) has each value rewritten in place — and the result
     stays a valid single-root document with no pragma Singleton."""
@@ -177,17 +180,16 @@ def test_requires_pristine_template(
         )
 
 
-def test_skip_when_no_managed_properties(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_skip_when_no_managed_properties(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """If the QML declares none of the managed font/theme properties, the
     patcher must NOT append anything — appending a block to a QML file
     that doesn't expect it is a syntax error (this was the root cause of
     the blue lock screen: kscreenlocker_greet fell back to the built-in
     blue locker)."""
     qml_no_props = (
-        "import QtQuick\n"
-        "Item {\n"
-        '    property string unrelatedThing: "x"\n'
-        "}\n"
+        'import QtQuick\nItem {\n    property string unrelatedThing: "x"\n}\n'
     )
     templates = tmp_path / "templates"
     templates.mkdir()
@@ -281,7 +283,9 @@ def test_lock_patch_idempotent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     assert "no change" in msg
 
 
-def test_lock_patch_skips_when_no_timer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_lock_patch_skips_when_no_timer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """If the QML has no fadeoutTimer, the lock patch skips."""
     qml = "import QtQuick\nItem {\n    property int x: 1\n}\n"
     templates = tmp_path / "templates"

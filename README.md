@@ -1,11 +1,11 @@
 <div align="center">
-  <h1>✨ uniquesurface ✨</h1>
+  <h1>✨ trinity ✨</h1>
   <p><strong>Unified Plasma 6 surface-set manager — desktop, lock screen, and SDDM login, in sync.</strong></p>
 
   [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
   [![KDE Plasma 6](https://img.shields.io/badge/KDE-Plasma%206-1d99f3.svg?logo=kde)](https://kde.org/plasma-desktop/)
   [![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/License-PolyForm%20Noncommercial-yellow.svg)](LICENSE)
-  [![Tests](https://img.shields.io/badge/tests-109%20passed-success)](https://pytest.org/)
+  [![Tests](https://img.shields.io/badge/tests-114%20passed-success)](https://pytest.org/)
 </div>
 
 > [!NOTE]
@@ -16,18 +16,18 @@ One CLI, one config file, **three surfaces**: desktop, lock screen, and SDDM log
 
 ---
 
-## 🌟 Why `uniquesurface`?
+## 🌟 Why `trinity`?
 
 Existing wallpaper tools like `variety` or `nitrogen` only handle the desktop. GUI projects like `PlasmaWallpaperManager` often patch vendor files irreversibly and brick systems after a KDE update.
 
-`uniquesurface` is the **CLI-first, reversible, systemd-automated** option for KDE Plasma 6 users who want a cohesive look across all three surfaces — and trust that their visuals (and their login screen) will stay intact.
+`trinity` is the **CLI-first, reversible, systemd-automated** option for KDE Plasma 6 users who want a cohesive look across all three surfaces — and trust that their visuals (and their login screen) will stay intact.
 
 ### ✨ Key features
 
 - **Total cohesion** — one wallpaper applied to desktop and lock screen at once, plus SDDM login when run with root.
 - **Provider registry** — built-in Bing Picture of the Day, local files, and solid colours; built on a [`pluggy`](https://pluggy.readthedocs.io/) hook model (third-party entry-point loading is implemented but not validated with an external package yet).
-- **Atomic rollbacks** — every file change is written to an append-only undo log. `usurface restore` replays the inverse operations newest-first.
-- **Safe QML patching** — sentinel-based patching with drift detection. If an upstream KDE update alters a file, `uniquesurface` detects the drift instead of bricking your login screen.
+- **Atomic rollbacks** — every file change is written to an append-only undo log. `trinity restore` replays the inverse operations newest-first.
+- **Safe QML patching** — sentinel-based patching with drift detection. If an upstream KDE update alters a file, `trinity` detects the drift instead of bricking your login screen.
 - **Automated refreshes** — installs a systemd user timer for a daily wallpaper refresh.
 - **Strict configuration** — pydantic-validated TOML schema catches typos before they reach your system.
 
@@ -49,25 +49,25 @@ Existing wallpaper tools like `variety` or `nitrogen` only handle the desktop. G
 uv tool install .
 
 # …or directly from GitHub
-uv tool install git+https://github.com/MattCreigh/uniquesurface.git
+uv tool install git+https://github.com/MattCreigh/trinity.git
 ```
 
-This installs the `usurface` console script on your PATH.
+This installs the `trinity` console script on your PATH.
 
 ### First-time setup
 
 Generate a starter config:
 
 ```sh
-usurface config init
+trinity config init
 ```
 
-Edit `~/.config/usurface/config.toml` to pick a provider (default: Bing POTD). See the [config reference](docs/config-reference.md) for every key.
+Edit `~/.config/trinity/config.toml` to pick a provider (default: Bing POTD). See the [config reference](docs/config-reference.md) for every key.
 
 Then install the bundled font, shared wallpaper directory, and systemd timer:
 
 ```sh
-sudo usurface install
+sudo trinity install
 ```
 
 > The `sudo` is only for the system-wide font, `/usr/local/share/wallpapers`, and SDDM `theme.conf` steps; the systemd user timer is enabled under your own desktop user.
@@ -75,19 +75,19 @@ sudo usurface install
 ### Applying the wallpaper
 
 ```sh
-usurface apply            # desktop + lock screen + login (login needs root)
-sudo usurface apply       # apply all three surfaces, including SDDM login
-usurface apply --dry-run  # preview without writing
+trinity apply            # desktop + lock screen + login (login needs root)
+sudo trinity apply       # apply all three surfaces, including SDDM login
+trinity apply --dry-run  # preview without writing
 ```
 
 ### Other commands
 
 ```sh
-usurface status           # show config + recent manifest entries
-usurface doctor           # verify drift, fonts, config, permissions
-usurface restore          # revert every recorded change
-usurface pause            # temporarily stop the daily timer
-usurface resume           # re-enable the daily timer
+trinity status           # show config + recent manifest entries
+trinity doctor           # verify drift, fonts, config, permissions
+trinity restore          # revert every recorded change
+trinity pause            # temporarily stop the daily timer
+trinity resume           # re-enable the daily timer
 ```
 
 ---
@@ -97,7 +97,7 @@ usurface resume           # re-enable the daily timer
 List available providers:
 
 ```sh
-usurface provider list
+trinity provider list
 #   bing    [built-in]   Bing Picture of the Day.
 #   file    [built-in]   Local image file.
 #   solid   [built-in]   Solid colour or gradient.
@@ -106,16 +106,16 @@ usurface provider list
 Get details on one:
 
 ```sh
-usurface provider info bing
+trinity provider info bing
 ```
 
-Built-ins are registered through [`pluggy`](https://pluggy.readthedocs.io/). Third-party entry-point loading is also implemented in `make_plugin_manager` via `importlib.metadata.entry_points(group="usurface.providers")`; see [`src/usurface/providers/README.md`](src/usurface/providers/README.md).
+Built-ins are registered through [`pluggy`](https://pluggy.readthedocs.io/). Third-party entry-point loading is also implemented in `make_plugin_manager` via `importlib.metadata.entry_points(group="trinity.providers")`; see [`src/trinity/providers/README.md`](src/trinity/providers/README.md).
 
 ---
 
 ## ⚙️ Configuration
 
-Config lives at `~/.config/usurface/config.toml`. A minimal example:
+Config lives at `~/.config/trinity/config.toml`. A minimal example:
 
 ```toml
 [surface]
@@ -136,7 +136,7 @@ password_character = "●"
 
 [surface.behaviour]
 shared_dir = "/usr/local/share/wallpapers"
-user_dir = "~/.local/state/usurface"
+user_dir = "~/.local/state/trinity"
 ```
 
 Full reference: [`docs/config-reference.md`](docs/config-reference.md).
@@ -149,7 +149,7 @@ Full reference: [`docs/config-reference.md`](docs/config-reference.md).
 
 1. **Fetch** the image from the configured provider.
 2. **Verify** it with Pillow (decode + re-encode, strip metadata).
-3. **Write** the image to `~/.local/state/usurface/last_wallpaper.jpg` and the SDDM-readable `/usr/local/share/wallpapers/last_wallpaper.jpg`.
+3. **Write** the image to `~/.local/state/trinity/last_wallpaper.jpg` and the SDDM-readable `/usr/local/share/wallpapers/last_wallpaper.jpg`.
 4. **Apply** to each surface:
    - **Desktop** — `kwriteconfig6` on the nested `[Containments][<id>][Wallpaper][org.kde.image][General] Image=` groups in `plasma-org.kde.plasma.desktop-appletsrc` + `qdbus6 org.kde.plasmashell /PlasmaShell evaluateScript`.
    - **Lock** — `kwriteconfig6` on `kscreenlockerrc` (`[Greeter][Wallpaper][org.kde.image][General] Image=`).
@@ -177,10 +177,10 @@ Design principles:
 ## 🧪 Development
 
 ```sh
-git clone https://github.com/MattCreigh/uniquesurface.git
-cd uniquesurface
+git clone https://github.com/MattCreigh/trinity.git
+cd trinity
 uv sync            # create venv + install dev deps
-uv run pytest -q   # run the test suite (109 tests)
+uv run pytest -q   # run the test suite (114 tests)
 uv run ruff check src tests
 uv run mypy src tests
 ```

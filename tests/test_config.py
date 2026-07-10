@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from usurface import config
-
+from trinity import config
 
 SAMPLE_TOML = """\
 [surface]
@@ -34,7 +33,7 @@ suppress_wake_keypress = true
 
 [surface.behaviour]
 shared_dir = "/usr/local/share/wallpapers"
-user_dir = "~/.local/state/usurface"
+user_dir = "~/.local/state/trinity"
 """
 
 
@@ -92,7 +91,7 @@ def test_expand_behaviour_paths() -> None:
     parsed = config.load_config_from_string(SAMPLE_TOML)
     expanded = config.expand_behaviour_paths(parsed)
     assert "~" not in expanded.surface.behaviour.user_dir
-    assert expanded.surface.behaviour.user_dir.endswith(".local/state/usurface")
+    assert expanded.surface.behaviour.user_dir.endswith(".local/state/trinity")
 
 
 def test_missing_source_provider_fails() -> None:
@@ -113,7 +112,8 @@ def test_legacy_show_user_list_still_loads_and_warns(
     """A config containing the removed 'show_user_list' key must still
     load (the validator strips it) rather than failing with extra=forbid."""
     import logging
-    from usurface.config import load_config_from_string
+
+    from trinity.config import load_config_from_string
 
     toml = """
 [surface]
@@ -134,8 +134,9 @@ show_user_list = false
 
 def test_unknown_key_still_fails_validation() -> None:
     """A genuinely unknown key must still be rejected (extra=forbid)."""
-    from usurface.config import load_config_from_string
     import pytest
+
+    from trinity.config import load_config_from_string
 
     toml = """
 [surface]

@@ -7,10 +7,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from usurface.backends.base import BackendError
-from usurface.backends.login import LoginBackend
-from usurface.orchestrator import apply_to_surfaces, verify_image
-from usurface.schema import (
+from trinity.backends.base import BackendError
+from trinity.backends.login import LoginBackend
+from trinity.orchestrator import apply_to_surfaces, verify_image
+from trinity.schema import (
     Behaviour,
     Config,
     Fonts,
@@ -49,7 +49,7 @@ def test_login_backend_raises_backenderror_when_unwritable(
     BackendError with a hint to re-run with sudo."""
     fake_path = tmp_path / "theme.conf"
     fake_path.write_text("background=\n")
-    monkeypatch.setattr("usurface.backends.login._THEME_CONF_PATH", fake_path)
+    monkeypatch.setattr("trinity.backends.login._THEME_CONF_PATH", fake_path)
     monkeypatch.setattr("os.access", lambda *a, **k: False)
     monkeypatch.setattr("os.geteuid", lambda: 1000)
 
@@ -79,7 +79,7 @@ def test_apply_continues_when_backend_fails(
     )
 
     # Stub the provider fetch to return our local image.
-    from usurface.providers import FetchedImage
+    from trinity.providers import FetchedImage
 
     def fake_fetch(*args, **kwargs):  # type: ignore[no-untyped-def]
         return FetchedImage(
@@ -88,12 +88,12 @@ def test_apply_continues_when_backend_fails(
             suggested_extension=".png",
         )
 
-    monkeypatch.setattr("usurface.orchestrator.fetch_from_source", fake_fetch)
-    monkeypatch.setattr("usurface.orchestrator.fetch_wallpaper", lambda c: fake_fetch())
+    monkeypatch.setattr("trinity.orchestrator.fetch_from_source", fake_fetch)
+    monkeypatch.setattr("trinity.orchestrator.fetch_wallpaper", lambda c: fake_fetch())
 
     # Stub desktop + lock backends to succeed; login to fail.
-    from usurface.backends.desktop import DesktopBackend
-    from usurface.backends.lock import LockBackend
+    from trinity.backends.desktop import DesktopBackend
+    from trinity.backends.lock import LockBackend
 
     monkeypatch.setattr(DesktopBackend, "apply", lambda self, m, w: None)
     monkeypatch.setattr(LockBackend, "apply", lambda self, m, w: None)
@@ -118,8 +118,9 @@ def test_apply_continues_when_backend_fails(
 
 def test_verify_image_strips_metadata() -> None:
     """verify_image re-encodes the input; the output is a valid image."""
-    from PIL import Image
     import io
+
+    from PIL import Image
 
     img = Image.new("RGB", (4, 4), (200, 100, 50))
     buf = io.BytesIO()

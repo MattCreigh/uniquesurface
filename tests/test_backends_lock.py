@@ -6,14 +6,14 @@ from pathlib import Path
 
 import pytest
 
-from usurface.backends.lock import LockBackend
-from usurface.manifest import Manifest
+from trinity.backends.lock import LockBackend
+from trinity.manifest import Manifest
 
 
 @pytest.fixture
 def fake_kwriteconfig(monkeypatch: pytest.MonkeyPatch):
     calls: list[list[str]] = []
-    from usurface.backends import _kconfig as kc
+    from trinity.backends import _kconfig as kc
 
     def fake(*, file, group, key, value, type_=None, dry_run=False):  # type: ignore[no-untyped-def]
         argv = [
@@ -33,26 +33,36 @@ def fake_kwriteconfig(monkeypatch: pytest.MonkeyPatch):
 
     monkeypatch.setattr(kc, "kwriteconfig", fake)
 
-    def fake_nested(*, file, group_path, key, value):  # type: ignore[no-untyped-def]
+    def fake_nested(*, file, group_path, key, value, type_=None, dry_run=False):  # type: ignore[no-untyped-def]
         argv = ["kwriteconfig6", "--file", str(file)]
         for g in group_path:
             argv.extend(["--group", g])
         argv.extend(["--key", key, "--type", "string", value])
         calls.append(argv)
+        return argv
 
-    monkeypatch.setattr("usurface.backends.lock._kwriteconfig_nested", fake_nested)
+    # After the H1 refactor the lock backend calls the shared helper in
+    # ``_kconfig`` directly (instead of its own re-implementation), so
+    # patch it on the ``_kconfig`` module.
+    monkeypatch.setattr(kc, "kwriteconfig_nested", fake_nested)
 
     # Mock the live lock-screen reload so tests never invoke a real qdbus6.
     reload_calls: list[list[str]] = []
 
     def fake_reload(*, dry_run=False):  # type: ignore[no-untyped-def]
         reload_calls.append(
-            ["qdbus6", "org.freedesktop.ScreenSaver",
-             "/org/freedesktop/ScreenSaver", "org.kde.screensaver.configure"]
+            [
+                "qdbus6",
+                "org.freedesktop.ScreenSaver",
+                "/org/freedesktop/ScreenSaver",
+                "org.kde.screensaver.configure",
+            ]
         )
         return reload_calls[-1]
 
-    monkeypatch.setattr("usurface.backends._kconfig.reload_lockscreen_config", fake_reload)
+    monkeypatch.setattr(
+        "trinity.backends._kconfig.reload_lockscreen_config", fake_reload
+    )
     return calls
 
 

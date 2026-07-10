@@ -1,4 +1,4 @@
-"""Shared pytest fixtures for usurface tests."""
+"""Shared pytest fixtures for trinity tests."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ def _isolate_xdg_env(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "xdg_cache"))
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     # Provide a writable "shared" wallpaper dir under tmp for tests.
-    monkeypatch.setenv("USURFACE_SHARED_DIR", str(tmp_path / "shared_wallpapers"))
+    monkeypatch.setenv("TRINITY_SHARED_DIR", str(tmp_path / "shared_wallpapers"))
     yield
 
 

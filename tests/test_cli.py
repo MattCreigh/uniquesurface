@@ -9,9 +9,9 @@ import pytest
 import respx
 from click.testing import CliRunner
 
-from usurface.cli import main
-from usurface.providers.builtin import bing
-from usurface.theme import extract
+from trinity.cli import main
+from trinity.providers.builtin import bing
+from trinity.theme import extract
 
 
 def test_config_init_writes_starter(
@@ -21,7 +21,7 @@ def test_config_init_writes_starter(
     runner = CliRunner()
     result = runner.invoke(main, ["config", "init"])
     assert result.exit_code == 0, result.output
-    config_path = Path(os_environ("XDG_CONFIG_HOME")) / "usurface" / "config.toml"
+    config_path = Path(os_environ("XDG_CONFIG_HOME")) / "trinity" / "config.toml"
     assert config_path.exists()
     text = config_path.read_text()
     assert 'provider = "bing"' in text
@@ -43,11 +43,13 @@ def test_apply_dry_run_with_solid_provider(
     # Set up an isolated XDG env.
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg_config"))
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "xdg_state"))
-    monkeypatch.setenv("USURFACE_SHARED_DIR", str(tmp_path / "shared"))
-    cfg_dir = tmp_path / "xdg_config" / "usurface"
+    monkeypatch.setenv("TRINITY_SHARED_DIR", str(tmp_path / "shared"))
+    cfg_dir = tmp_path / "xdg_config" / "trinity"
     cfg_dir.mkdir(parents=True)
+    shared = str(tmp_path / "shared")
+    user_state = str(tmp_path / "user_state")
     (cfg_dir / "config.toml").write_text(
-        """\
+        f"""\
 [surface]
 schema_version = 1
 
@@ -60,10 +62,9 @@ width = 32
 height = 18
 
 [surface.behaviour]
-shared_dir = "%s"
-user_dir = "%s"
+shared_dir = "{shared}"
+user_dir = "{user_state}"
 """
-        % (str(tmp_path / "shared"), str(tmp_path / "user_state"))
     )
 
     runner = CliRunner()
@@ -78,7 +79,7 @@ def test_apply_real_writes_files(
 ) -> None:
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg_config"))
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "xdg_state"))
-    monkeypatch.setenv("USURFACE_SHARED_DIR", str(tmp_path / "shared"))
+    monkeypatch.setenv("TRINITY_SHARED_DIR", str(tmp_path / "shared"))
 
     # Replace the SDDM theme.conf path with one we own.
     fake_sddm = tmp_path / "sddm" / "breeze" / "theme.conf"
@@ -86,13 +87,13 @@ def test_apply_real_writes_files(
     fake_sddm.write_text(
         "[General]\ntype=image\nbackground=/old.jpg\n", encoding="utf-8"
     )
-    from usurface.backends import login as login_mod
+    from trinity.backends import login as login_mod
 
     monkeypatch.setattr(login_mod, "_THEME_CONF_PATH", fake_sddm)
 
     # Mock extract targets and pristine template directory
-    from usurface import paths
-    from usurface.theme import extract as extract_mod
+    from trinity import paths
+    from trinity.theme import extract as extract_mod
 
     fake_login_qml = tmp_path / "Login.qml"
     fake_login_qml.write_text(
@@ -101,7 +102,7 @@ def test_apply_real_writes_files(
     )
 
     monkeypatch.setattr(paths, "templates_dir", lambda: tmp_path / "templates")
-    from usurface.theme.extract import copy_pristine_bytes
+    from trinity.theme.extract import copy_pristine_bytes
 
     copy_pristine_bytes(
         "sddm_login", b'import QtQuick\nItem { property string fontFamily: "Lato" }\n'
@@ -116,8 +117,9 @@ def test_apply_real_writes_files(
     )
 
     # Mock Bing. Use a real 1x1 JPEG so Pillow can decode it.
-    from PIL import Image
     import io
+
+    from PIL import Image
 
     buf = io.BytesIO()
     Image.new("RGB", (8, 8), "#1d99f3").save(buf, format="JPEG", quality=70)
@@ -137,18 +139,18 @@ def test_apply_real_writes_files(
     # Mock the D-Bus live-apply calls so the test never talks to the real
     # running Plasma shell (which would persist a tmp wallpaper path into
     # the user's real appletsrc).
-    from usurface.backends import _kconfig
+    from trinity.backends import _kconfig
 
-    monkeypatch.setattr(
-        _kconfig, "evaluate_wallpaper_script", lambda **kw: []
-    )
+    monkeypatch.setattr(_kconfig, "evaluate_wallpaper_script", lambda **kw: [])
     monkeypatch.setattr(_kconfig, "reload_lockscreen_config", lambda **kw: [])
     monkeypatch.setattr(_kconfig, "qdbus_call", lambda **kw: [])
 
-    cfg_dir = tmp_path / "xdg_config" / "usurface"
+    cfg_dir = tmp_path / "xdg_config" / "trinity"
     cfg_dir.mkdir(parents=True)
+    shared = str(tmp_path / "shared")
+    user_state = str(tmp_path / "user_state")
     (cfg_dir / "config.toml").write_text(
-        """\
+        f"""\
 [surface]
 schema_version = 1
 
@@ -159,10 +161,9 @@ provider = "bing"
 mkt = "en-US"
 
 [surface.behaviour]
-shared_dir = "%s"
-user_dir = "%s"
+shared_dir = "{shared}"
+user_dir = "{user_state}"
 """
-        % (str(tmp_path / "shared"), str(tmp_path / "user_state"))
     )
 
     runner = CliRunner()
@@ -177,9 +178,9 @@ user_dir = "%s"
     assert "last_wallpaper.jpg" in fake_sddm.read_text()
 
     # The manifest has entries (wallpapers, theme.conf, and QML screens)
-    from usurface.manifest import Manifest
+    from trinity.manifest import Manifest
 
-    m = Manifest(tmp_path / "xdg_state" / "usurface" / "manifest.jsonl")
+    m = Manifest(tmp_path / "xdg_state" / "trinity" / "manifest.jsonl")
     entries = m.iter_entries()
     assert len(entries) > 0
     # At least wallpaper writes, login config write, and QML write should be tracked.
@@ -192,7 +193,7 @@ user_dir = "%s"
     # SDDM Login.qml is patched with Inter font
     qml_content = fake_login_qml.read_text(encoding="utf-8")
     assert "Inter" in qml_content
-    assert "/* @usurface:start */" in qml_content
+    assert "/* @trinity:start */" in qml_content
 
 
 def test_status_runs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -266,7 +267,7 @@ def test_login_surface_needs_root_false_when_not_present(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """If the SDDM theme.conf doesn't exist, the helper returns False."""
-    from usurface.backends import login as login_mod
+    from trinity.backends import login as login_mod
 
     monkeypatch.setattr(login_mod, "_THEME_CONF_PATH", tmp_path / "nope.conf")
     assert login_mod.login_surface_needs_root() is False
@@ -276,7 +277,7 @@ def test_login_surface_needs_root_true_when_unwritable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """If theme.conf exists, is unwritable, and euid != 0, returns True."""
-    from usurface.backends import login as login_mod
+    from trinity.backends import login as login_mod
 
     conf = tmp_path / "theme.conf"
     conf.write_text("[General]\n")
@@ -291,7 +292,7 @@ def test_login_surface_needs_root_false_when_root(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Even if unwritable, euid 0 means root can write -> False."""
-    from usurface.backends import login as login_mod
+    from trinity.backends import login as login_mod
 
     conf = tmp_path / "theme.conf"
     conf.write_text("[General]\n")
@@ -311,17 +312,15 @@ def test_run_wrapper_installs_excepthook_and_renders_clierror(
     import sys
 
     code = (
-        "from usurface.cli import run, CLIError\n"
+        "from trinity.cli import run, CLIError\n"
         "raise CLIError('bad thing', hint='try this')\n"
     )
-    subprocess.run(
-        [sys.executable, "-c", code], capture_output=True, text=True
-    )
+    subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
     # Without the excepthook installed (run() not called), this is an
     # unhandled CLIError traceback. Now verify run() installs the hook:
     code2 = (
         "import sys\n"
-        "from usurface.cli import run, _install_excepthook, CLIError\n"
+        "from trinity.cli import run, _install_excepthook, CLIError\n"
         "_install_excepthook()\n"
         "raise CLIError('bad thing', hint='try this')\n"
     )
@@ -334,16 +333,16 @@ def test_run_wrapper_installs_excepthook_and_renders_clierror(
     assert "Traceback" not in proc2.stderr
 
 
-def test_usurface_version_via_run(tmp_path: Path) -> None:
-    """`usurface --version` works via the run() entry point wrapper."""
+def test_trinity_version_via_run(tmp_path: Path) -> None:
+    """`trinity --version` works via the run() entry point wrapper."""
     import subprocess
     import sys
 
     proc = subprocess.run(
-        [sys.executable, "-m", "usurface", "--version"],
+        [sys.executable, "-m", "trinity", "--version"],
         capture_output=True,
         text=True,
         env={"PATH": "/usr/bin:/bin"},
     )
     assert proc.returncode == 0
-    assert "uniquesurface" in proc.stdout
+    assert "trinity" in proc.stdout

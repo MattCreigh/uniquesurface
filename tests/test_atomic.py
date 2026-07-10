@@ -6,7 +6,7 @@ import os
 import stat
 from pathlib import Path
 
-from usurface.atomic import atomic_write_bytes, atomic_write_text
+from trinity.atomic import atomic_write_bytes, atomic_write_text
 
 
 def test_atomic_write_bytes_creates_file(tmp_path: Path) -> None:

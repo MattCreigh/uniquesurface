@@ -8,16 +8,15 @@ import httpx
 import pytest
 import respx
 
-from usurface.providers import (
+from trinity.providers import (
     ProviderError,
     fetch_from_source,
     get_provider,
     list_providers,
     make_plugin_manager,
 )
-from usurface.providers.builtin import bing, file, solid
-from usurface.schema import Source, SourceOptions
-
+from trinity.providers.builtin import bing, file, solid
+from trinity.schema import Source, SourceOptions
 
 # --- registry ---------------------------------------------------------
 
@@ -29,10 +28,12 @@ def test_registry_registers_three_builtins() -> None:
     assert names == {"bing", "file", "solid"}
 
 
-def test_third_party_entry_point_plugin_is_loaded(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A package declaring a ``usurface.providers`` entry point is loaded
+def test_third_party_entry_point_plugin_is_loaded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A package declaring a ``trinity.providers`` entry point is loaded
     by ``make_plugin_manager`` and appears alongside the built-ins."""
-    from usurface.providers import (
+    from trinity.providers import (
         FetchedImage,
         ProviderInfo,
         _BuiltinPlugin,
@@ -67,7 +68,7 @@ def test_third_party_entry_point_plugin_is_loaded(monkeypatch: pytest.MonkeyPatc
     import importlib.metadata as ilm
 
     def fake_entry_points(group=None):  # type: ignore[no-untyped-def]
-        if group == "usurface.providers":
+        if group == "trinity.providers":
             return fake_eps
         return []
 
@@ -92,7 +93,7 @@ def test_broken_entry_point_is_skipped(monkeypatch: pytest.MonkeyPatch) -> None:
     import importlib.metadata as ilm
 
     def fake_entry_points(group=None):  # type: ignore[no-untyped-def]
-        if group == "usurface.providers":
+        if group == "trinity.providers":
             return [BrokenEntryPoint()]
         return []
 
@@ -107,7 +108,7 @@ def test_broken_entry_point_is_skipped(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_get_provider_returns_matching_plugin() -> None:
     pm = make_plugin_manager()
     plugin = get_provider(pm, "solid")
-    name = pm.hook.usurface_provider_name(plugin=plugin)
+    name = pm.hook.trinity_provider_name(plugin=plugin)
     assert "solid" in name
 
 
@@ -121,7 +122,9 @@ def test_fetch_from_source_dispatches_correctly() -> None:
     pm = make_plugin_manager()
     source = Source(
         provider="solid",
-        options=SourceOptions.model_validate({"color": "#abcdef", "width": 32, "height": 18}),
+        options=SourceOptions.model_validate(
+            {"color": "#abcdef", "width": 32, "height": 18}
+        ),
     )
     img = fetch_from_source(pm, source)
     assert img.content_type == "image/jpeg"
@@ -163,9 +166,14 @@ def test_solid_rejects_zero_dimensions() -> None:
 # --- file --------------------------------------------------------------
 
 
-def test_file_provider_reads_local(tmp_path: Path) -> None:
+def test_file_provider_reads_local(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     target = tmp_path / "wp.png"
     target.write_bytes(b"\x89PNG\r\n\x1a\n" + b"fake-payload")
+    # The H3 security check allows the runtime shared wallpaper dir;
+    # point it at tmp_path so the test is hermetic.
+    monkeypatch.setenv("TRINITY_SHARED_DIR", str(tmp_path))
     img = file.fetch({"path": str(target)})
     assert img.content_type == "image/png"
     assert img.suggested_extension == ".png"
@@ -187,8 +195,25 @@ def test_file_provider_expands_home(
     monkeypatch.setenv("HOME", str(tmp_path))
     target = tmp_path / "wp.jpg"
     target.write_bytes(b"\xff\xd8\xff" + b"jpegs")
+    # Make the test's tmp_path an allowed root via the runtime shared dir.
+    monkeypatch.setenv("TRINITY_SHARED_DIR", str(tmp_path))
     img = file.fetch({"path": "~/wp.jpg"})
     assert img.content_type == "image/jpeg"
+
+
+def test_file_provider_rejects_path_outside_allowed_roots(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A user-supplied path that resolves outside ~/Pictures, ~/Wallpapers,
+    the system wallpaper dirs, or the runtime shared dir must be rejected
+    before any bytes are read into memory."""
+    target = tmp_path / "wp.jpg"
+    target.write_bytes(b"\xff\xd8\xff" + b"jpegs")
+    # Point TRINITY_SHARED_DIR elsewhere so tmp_path is not on the
+    # allow-list, then confirm the provider refuses to read it.
+    monkeypatch.setenv("TRINITY_SHARED_DIR", str(tmp_path / "elsewhere"))
+    with pytest.raises(ProviderError, match="not under an allowed root"):
+        file.fetch({"path": str(target)})
 
 
 # --- bing --------------------------------------------------------------

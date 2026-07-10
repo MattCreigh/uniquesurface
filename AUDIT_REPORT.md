@@ -1,308 +1,222 @@
-# uniquesurface — Enterprise Audit Report
+# trinity — Enterprise Audit Report (Code-First Remediation)
 
-**Date:** 2026-07-08
-**Target system:** `uniquesurface` (`usurface`) — Unified KDE Plasma 6 surface-set manager
-**Auditor:** Automated senior-architect review (code-first; READMEs/PLAN.md consulted but not trusted blindly)
-**Artifacts provided:** Full codebase (`src/`, `tests/`), `README.md`, `PLAN.md`, `CHANGELOG.md`, `CODEBASE_ASSESSMENT.md` (a prior self-audit), `docs/`.
-**Key question:** *Create an in-depth, well-researched report into the codebase and its aims — exclude natural language from the initial assessment, but do consider READMEs so as not to be swayed by docs too much.*
+**Date:** 2026-07-10
+**Target system:** `trinity` — Unified KDE Plasma 6 surface-set manager (desktop, lock, login wallpapers)
+**Auditor:** Automated senior-architect review (code-first; README/PLAN consulted but not trusted blindly)
+**Key question:** *Investigate the codebase excluding natural language from the assessment, identify any and all bugs, smells, anti-patterns, and inconsistencies, research remediation, create remediation plan, implement.*
+**Artifacts provided:** Full codebase (`src/`, `tests/`), `README.md`, `PLAN.md`, `CHANGELOG.md`, `docs/`.
 
 ---
 
 ## PART 1: Planning and Evidence Log
 
-### Search Queries Executed (workspace)
-- `load_setuptools_entrypoints|entry_point|load_entry` in `src/usurface/providers/__init__.py` → **empty** (third-party plugin loading NOT wired).
-- `clock_format|show_user_list|weight` in `schema.py` → `clock_format` and `weight` are unvalidated free strings.
-- `import jinja|from jinja` in `src/` → **empty** (Jinja2 is not used; systemd units use inline templates).
-- `import fonttools|from fonttools` in `src/` → **empty** (fonttools declared as dev dep but unused).
-- `def test_` in `tests/test_providers.py` → 18 tests, none cover third-party entry-point loading.
-- `grep -n "__version__\|^version"` → `0.1.0` in both `__init__.py` and `pyproject.toml` (consistent).
-
-### Live Verification Runs
-- `uv run --extra test pytest -q` → **106 passed in 1.45s**.
-- `uv run ruff check src tests` → **All checks passed!**
-- `uv run mypy src` → **Success: no issues found in 29 source files.**
-- `wc -l` over `src/ tests/*.py` → **6,052 LOC** (src ~3,500; tests ~2,500).
-- `ls src/usurface/theme/fonts/` → `Inter-Regular.ttf` (637 KB) IS vendored (contradicts CHANGELOG "Known limitations").
+### Methodology
+A thorough read-only exploration subagent was dispatched to scan every source file in `src/trinity/` for bugs, smells, anti-patterns, and inconsistencies. Its findings (69 issues across 15 files) were cross-validated against the actual source code, then triaged by severity. All Critical and High-severity issues, plus the most impactful Medium/Low issues, were remediated in this session.
 
 ### Files Scanned (primary)
-- `pyproject.toml`, `README.md`, `PLAN.md`, `CHANGELOG.md`, `CODEBASE_ASSESSMENT.md`
-- `src/usurface/__init__.py`, `cli.py`, `orchestrator.py`, `config.py`, `schema.py`, `paths.py`, `atomic.py`, `manifest.py`, `logging.py`
-- `src/usurface/backends/{base,desktop,lock,login,_kconfig}.py`
-- `src/usurface/providers/{__init__.py,builtin/{bing,file,solid}.py}`
-- `src/usurface/theme/{extract,drift,qml_patch,font_install}.py`
-- `src/usurface/systemd/writer.py`
-- `docs/{config-reference,migration-from-shell}.md`
-- `src/usurface/providers/README.md`
+- `src/trinity/__init__.py`, `__main__.py`, `cli.py`, `config.py`, `schema.py`, `orchestrator.py`, `paths.py`, `logging.py`, `atomic.py`, `manifest.py`
+- `src/trinity/backends/base.py`, `desktop.py`, `lock.py`, `login.py`, `_kconfig.py`, `__init__.py`
+- `src/trinity/providers/__init__.py`, `builtin/bing.py`, `builtin/file.py`, `builtin/solid.py`, `builtin/__init__.py`
+- `src/trinity/systemd/__init__.py`, `writer.py`
+- `src/trinity/theme/__init__.py`, `drift.py`, `extract.py`, `font_install.py`, `qml_patch.py`
+- `tests/conftest.py`, `test_manifest.py`, `test_orchestrator_drift.py`, `test_cli.py`, `test_backends_lock.py`, `test_paths.py`
+- `pyproject.toml`, `README.md`
 
-### Found Discrepancies (docs ↔ code)
-1. **Third-party provider plugins are documented but NOT implemented.** `providers/README.md` and `PLAN.md §7.5` describe entry-point plugins; `make_plugin_manager()` only registers the three built-ins and never calls `pm.load_setuptools_entrypoints()`. The "provider-extensible" headline feature is, for third parties, **marketing-only**.
-2. **CHANGELOG "Known limitations" is stale.** It states "No vendored Inter font bundled" — but `theme/fonts/Inter-Regular.ttf` (637 KB) is present and `_bundled_font()` finds it.
-3. **README test badge says `86 passed`**; actual is **106 passed**. Under-stated (cosmetic).
-4. **README/PLAN claim `pluggy` plugin model** — true for built-ins, but the entry-point discovery that makes it "extensible" is absent.
-5. **`CODEBASE_ASSESSMENT.md` (prior audit) claims Jinja2 is a runtime dependency.** It is not declared in `pyproject.toml` and never imported; systemd units use inline Python string templates. The prior audit also reported `78 passed` — the suite has grown to 106.
-6. **`docs/config-reference.md` shows `[surface.lock]` with only `on_idle_dim_seconds`** but the schema also has `suppress_wake_keypress` (default `true`) — minor doc drift.
-7. **`clock_format` and `weight` are unvalidated free strings** (no regex/enum). Mitigated by QML-literal escaping in `_replace_property_values`, so not an injection hole — but typos silently produce a broken clock font.
+### Live Verification Runs
+- `uv run pytest -q` → **114 passed in 1.14s** (before and after remediation)
+- `uv run ruff check src tests` → **All checks passed!**
+- `uv run mypy src` → **Success: no issues found in 29 source files**
 
-### Strategic Hypotheses (initial answer to the key question)
-- *Architecture:* Clean, layered, testable; atomic I/O + manifest undo is genuinely strong for this domain.
-- *Aims:* Coherent and mostly realised for built-in flows (desktop/lock/login wallpaper + font/theme token patching).
-- *Biggest gap:* The "provider-extensible via plugins" claim is unimplemented; only built-ins work.
-- *Biggest risk:* QML patching of vendor files is the fragile, high-blast-radius surface — well-mitigated by drift detection + consent gate, but still the part most likely to break on a Plasma update.
-- *Verdict preview:* A focused, well-engineered niche tool that **is good at what it actually does**, with one headline feature that is currently vapourware.
+### Found Discrepancies (code vs docs)
+- **README.md** extensively referenced `usurface`/`uniquesurface` (the old package name) while the codebase was fully renamed to `trinity`. Fixed.
+- `DriftReport.on_disk_matches_re_extracted` field and the module docstring described a "re-extract a fresh pristine" step that was never implemented. Removed.
+- `kreadconfig` documented as "used to introspect containment ids" but never called — `desktop.py` parses the file directly. Removed.
+- `copy_pristine` (non-bytes variant) never called. Removed.
+- `on_disk_file_hash` documented as "used by tests" but no test references it. Removed.
+
+### Strategic Hypotheses
+The codebase is architecturally sound — clean separation of concerns (providers → orchestrator → backends → theme), strict pydantic config, atomic I/O, append-only manifest with bounded history, drift detection with consent-gated adoption. The bugs found are concentrated in: (1) the `adopt_drift` error-recovery branch (incomplete re-patching), (2) edge-case handling in image processing and provider validation, (3) stale documentation after the rename, and (4) dead code accumulation. No Critical security vulnerabilities were found.
 
 ---
 
 ## PART 2: Final Audit Report
 
-## Executive Summary
+### Executive Summary
 
-`uniquesurface` is a well-architected, single-purpose Python CLI that synchronises wallpaper and font/theme tokens across the three KDE Plasma 6 surfaces (desktop, lock, SDDM login). For its **actually-implemented** scope — three built-in providers, atomic writes, append-only manifest with rollback, drift-aware QML patching, and a systemd timer — it is genuinely good: 106 passing tests, clean ruff and mypy, ~6k LOC, no shell scripts, reversible and idempotent by construction. The single most important takeaway is that the **"provider-extensible via a `pluggy` plugin model" headline is not wired up**: `make_plugin_manager()` registers only built-ins and never loads entry points, so third-party providers — the feature most prominently advertised in the README and `providers/README.md` — cannot work as documented. Answering the key question directly: the codebase and its aims are coherent and the implementation is solid where it exists, but one marquee capability is documentation-only, and that gap should be closed or the docs corrected before any public release.
+**Verdict:** trinity is a well-engineered, production-quality CLI tool with a clean architecture, strong test coverage (114 tests, ~1s), and thoughtful operational safeguards (atomic writes, manifest-based undo, drift detection, sudo-aware ownership restoration). The codebase had **one Critical bug** (the `adopt_drift` recovery path silently skipped lock-token patching for `MainBlock.qml` after a Plasma update), **several High-severity issues** (image alpha-channel handling, provider error handling, CLI excepthook bypass), and a long tail of Medium/Low smells (dead code, stale docs, duplicated regexes, performance). **All Critical and High issues, plus the most impactful Medium/Low issues, have been remediated in this session.** The single most important takeaway: the `adopt_drift` path was the only code that could leave a lock screen in an inconsistent state after a KDE update, and it was silently broken.
 
-## 1. Technical Audit
+---
 
-### 1.1 Component-by-Component Assessment
+### 1. Technical Audit
 
-| # | Component | Score (/10) | Evidence / Notes |
-|---|-----------|:---:|---|
-| 1 | `cli.py` (Click) | 8 | 11 commands incl. `apply/restore/status/install/uninstall/pause/resume/doctor/migrate-from-shell/qml-update-templates`; `CLIError` + `excepthook` give clean user errors; `USURFACE_DEBUG` opt-in traceback. Lazy imports keep startup cheap. |
-| 2 | `config.py` / `schema.py` (pydantic v2) | 7 | Strict (`extra="forbid"`), regex-validated provider/font/color; legacy-key stripping for `show_user_list`; `schema_version` migration hook. **Gap:** `clock_format` and `weight` are unvalidated free strings. |
-| 3 | `providers/__init__.py` | 5 | Clean `pluggy` hookspec + built-in adapter. **Critical gap:** `load_setuptools_entrypoints("usurface.providers")` never called → third-party plugins documented in `providers/README.md` are non-functional. |
-| 4 | `providers/builtin/bing.py` | 8 | `httpx` with browser UA, streaming + 50 MiB download cap (Content-Length + byte-count), `ProviderError` on bad metadata. Good defensive network code. No proxy/TLS-pin config. |
-| 5 | `providers/builtin/{file,solid}.py` | 7 | `file` expands `~`/env, infers content-type; `solid` validates hex + dimensions, generates solid/gradient JPEG. `file` reads verbatim (no size cap on local files). |
-| 6 | `orchestrator.py` | 8 | Template-method pipeline; per-backend `BackendError` caught so one failing surface doesn't abort others; `adopt_drift` consent path; manifest compaction after success. `verify_image` decodes+re-encodes, strips metadata. |
-| 7 | `backends/desktop.py` + `_kconfig.py` | 7 | Shells out to `kwriteconfig6` + `qdbus6 refreshWallpaper`. Known limitation (repo memory): writes flat `[Containments]` group, relies on qdbus refresh. `qdbus_call` tolerates missing Plasma (soft failure). |
-| 8 | `backends/lock.py` | 8 | Correct nested-group path `[Greeter][Wallpaper][org.kde.image][General] Image=` verified against upstream kscreenlocker. Drops to `SUDO_USER` when root so it doesn't write root-owned user config. |
-| 9 | `backends/login.py` | 7 | Regex edit of SDDM `theme.conf` `background=`/`color=`; `_can_write` checks file+parent; `login_surface_needs_root()` pre-flight warns user. Hard-coded to Breeze theme path (acceptable per PLAN non-goal). |
-| 10 | `theme/qml_patch.py` | 8 | Sentinel-comment region + in-place `readonly property string` value rewrite (the corrected approach after the `pragma Singleton` blue-screen lesson). Escapes `"`/`\` in values. `_merged_marker_block` lets font+lock patchers share one sentinel region. |
-| 11 | `theme/drift.py` | 9 | SHA-256 of sentinel-stripped + property-normalised content vs stored pristine; `DriftError` refuses silent adoption; idempotent backups (dedup by content SHA); explicit `--adopt-drift` consent. This is the standout safety mechanism. |
-| 12 | `theme/extract.py` + `font_install.py` | 7 | Pristine QML copied (sentinels stripped) into state dir; font install tries `/usr/local/share/fonts/usurface` then `~/.local/share/fonts`; runs `fc-cache -f`. `is_installed` uses `fc-match` substring match (fragile but acceptable). |
-| 13 | `manifest.py` | 9 | Append-only JSONL with SHA-256 + byte snapshots; `restore` replays inverse ops newest-first; `compact` bounds history to 200 entries; snapshot pruning by reference set. Robust undo subsystem. |
-| 14 | `atomic.py` | 8 | tmp → fsync → `os.replace`; EXDEV fallback to sibling temp; last-resort direct overwrite with a helpful permission-error message. The non-atomic fallback is a deliberate trade-off (clarity over atomicity) — worth a doc note. |
-| 15 | `systemd/writer.py` | 8 | Inline unit templates (no Jinja2 despite prior audit's claim); `UsurfaceBinaryNotFound` instead of a silent 203/EXEC failure; `pause`/`resume` via runtime `mask`/`unmask`; `is_paused` checks the `/dev/null` symlink. |
-| 16 | `paths.py` | 8 | XDG-aware via `platformdirs`; `SUDO_USER` honoured so root runs touch the invoking user's dirs; `USURFACE_SHARED_DIR` override. |
-| 17 | Tests (15 files, 106 tests) | 8 | Atomic, config, providers (respx-mocked Bing), backends (fake kwriteconfig), manifest, qml_patch (snapshot), drift, systemd, CLI e2e. **Gap:** no entry-point plugin test, no `@pytest.mark.integration` test in use. |
+#### 1.1 Component-by-Component Assessment
 
-### 1.2 Security Deep-Dive
+| Component | Score | Evidence |
+|-----------|-------|----------|
+| `orchestrator.py` | 8/10 | Clean pipeline; **Critical bug fixed** (adopt_drift lock-token skip); chown-on-dir issue fixed; alpha handling fixed |
+| `atomic.py` | 8/10 | Solid tmp+fsync+rename with EXDEV fallback; non-atomic fallback is documented last-resort |
+| `manifest.py` | 9/10 | Append-only with O_APPEND atomicity, bounded history, snapshot dedup; corruption tolerance added |
+| `config.py` | 8/10 | Strict pydantic, sudo-aware `~` expansion; `_to_toml` serializer is fragile but adequate for flat configs |
+| `schema.py` | 8/10 | Strict validation, legacy key stripping; clock format regex allows `'` (safe in double-quoted QML) |
+| `paths.py` | 8/10 | XDG-aware, sudo-aware; `last_wallpaper()`/`shared_wallpaper()` are convenience stubs |
+| `cli.py` | 8/10 | Clean Click groups; **excepthook bypass fixed** (standalone_mode=False); font family now config-driven |
+| `backends/desktop.py` | 8/10 | Correct nested-containment discovery + live D-Bus apply; containment parser is convoluted but correct |
+| `backends/lock.py` | 9/10 | Correct `[Greeter][Wallpaper][org.kde.image][General]` path; dead `Theme=` write removed |
+| `backends/login.py` | 8/10 | Safe regex-based `theme.conf` editing; writability check |
+| `backends/_kconfig.py` | 8/10 | Good sudo-drop for D-Bus; `kreadconfig` dead code removed; error message fixed |
+| `providers/__init__.py` | 8/10 | Clean pluggy registry; **logging fixed** (structlog not stdlib); **Protocol bodies fixed** |
+| `providers/builtin/bing.py` | 8/10 | **Fixed**: single client, URL validation, JSON error catching, follow_redirects |
+| `providers/builtin/file.py` | 9/10 | Strong path-traversal protection via allow-listed roots + symlink resolution |
+| `providers/builtin/solid.py` | 9/10 | **Fixed**: O(height) Python loop replaced with Pillow composite; dimension cap added |
+| `systemd/writer.py` | 8/10 | **Fixed**: DBUS_SESSION_BUS_ADDRESS under sudo, resume() result check, is_paused() OSError guard |
+| `theme/drift.py` | 8/10 | **Fixed**: no-pristine vs drift distinction; dedup fadeout regex; dead field/code removed |
+| `theme/extract.py` | 9/10 | **Fixed**: atomic writes; dead `copy_pristine` removed |
+| `theme/qml_patch.py` | 8/10 | Sentinel-based patching is clever and safe; dead `require_sentinels` removed |
+| `theme/font_install.py` | 8/10 | **Fixed**: multi-family fc-match matching |
 
-**Threat model.** The system runs as the user for `apply` and as root for `install`/patching system files. Surfaces of concern: network fetch (Bing), local file read (file provider), QML injection (config → vendor QML), and root-privilege QML writes.
+#### 1.2 Security Deep-Dive
 
-| Finding | Severity | Likelihood | Impact | Evidence |
-|---|---|---|---|---|
-| Third-party provider plugins documented but not loaded → users may install a "plugin" package expecting it to work; if a future patch wires `load_setuptools_entrypoints` without sandboxing, arbitrary code runs as the user. Currently inert, but the docs create a false expectation. | Medium | Possible | Major | `providers/__init__.py` has no `load_setuptools_entrypoints`; `providers/README.md` documents entry-point registration. |
-| `file` provider reads arbitrary local files verbatim into the wallpaper pipeline (then re-encoded by Pillow, so not exfiltrated, but a huge file could exhaust memory — Pillow decodes the whole image). | Low | Unlikely | Minor | `providers/builtin/file.py` has no size cap; `verify_image` decodes full image. |
-| QML value injection is mitigated: `_replace_property_values` escapes `\` and `"` before substituting into `"...literal..."`. A malicious `clock_format`/`weight`/`font_family`/`password_character` cannot break out of the QML string literal. | — (mitigated) | — | — | `qml_patch.py` replacement logic. |
-| `font_family` is regex-validated (`^[A-Za-z0-9][A-Za-z0-9 _.-]{0,127}$`) — good; `accent_color` validated as `#RGB`/`#RRGGBB` — good; `provider` name validated — good. `clock_format` and `weight` are **not** validated (only length-bound by QML escape). | Low | Possible | Minor | `schema.py` lacks validators for those two fields. |
-| `kwriteconfig6`/`qdbus6` argv: values are passed as separate argv elements (not shell-joined), so no shell-injection. `subprocess.run(..., check=True)`. Safe. | — (ok) | — | — | `_kconfig.py`, `lock.py`. |
-| Root runs drop to `SUDO_USER` for `kwriteconfig6` and `systemctl --user` — prevents accidental root-owned user config. Good privilege hygiene. | — (ok) | — | — | `lock.py::_kwriteconfig_nested`, `systemd/writer.py::systemctl`. |
-| `verify_image` re-encodes via Pillow, stripping EXIF/metadata — a small privacy win. Pillow itself is a C parser with historical CVEs; keeping `<12` pinned is correct. | Low | Rare | Moderate | `orchestrator.py::verify_image`. |
-| No TLS certificate pinning / proxy config for Bing fetch; relies on `httpx` defaults. Acceptable for a POTD client. | Low | Unlikely | Minor | `bing.py`. |
-| Manifest snapshots stored under `~/.local/state/usurface/manifest_snapshots/`; if that dir is deleted, `restore` raises `FileNotFoundError` (refuses to silently corrupt). Correct fail-closed behaviour. | — (ok) | — | — | `manifest.py::restore`. |
+**No Critical security vulnerabilities found.** Key observations:
 
-**Overall security posture:** solid for a single-user desktop tool. The only genuinely material item is the **not-yet-wired plugin surface**: when it is wired, it must be treated as a supply-chain trust boundary (the `providers/README.md` already says so) and ideally gated behind an explicit allow-list or confirmation.
+- **Path traversal (file provider):** Protected by allow-listed roots + `Path.resolve()` symlink resolution. A TOCTOU window exists between `_is_under()` and `read_bytes()`, but exploiting it requires replacing a file with a symlink in the ~milliseconds between check and read — low practical risk on a single-user desktop.
+- **Command injection:** No `shell=True` anywhere. All subprocess calls use explicit argv lists. The `evaluate_wallpaper_script` JS is escaped for single quotes/backslashes. The systemd unit template uses `.format()` which would break (not inject) on `{` in a path — low risk on Linux.
+- **Image processing:** `verify_image` decodes with Pillow and re-encodes, stripping EXIF metadata (privacy improvement). Download capped at 50 MiB (bing) / 100 MiB (file). Solid provider now dimension-capped at 7680px.
+- **Secret management:** No secrets handled. Bing provider uses no API key. SDDM `theme.conf` editing is root-gated.
+- **Deserialization:** TOML config parsed with stdlib `tomllib` (safe). Manifest JSONL parsed with `json.loads` (safe). No `pickle`, `eval`, or `exec`.
 
-### 1.3 Performance & Resource Efficiency
+#### 1.3 Performance & Resource Efficiency
 
-- **No token cost** (not an LLM system) — N/A for the "token efficiency" criterion; the analogue is *disk/network/CPU*.
-- **Network:** Bing provider streams with a 50 MiB cap; metadata is one small JSON GET. A daily run is ~2 MiB/day.
-- **Disk:** Wallpaper is written twice (user copy + shared copy, ~2 MiB each) and re-encoded once; manifest snapshots deduplicate by SHA-256 (identical prior states share one snapshot). Manifest compaction bounds to 200 entries — disk cannot grow unbounded under the timer.
-- **CPU:** One Pillow decode + re-encode per apply — sub-100 ms for a 1080p JPEG on a modern laptop.
-- **Memory:** `file` provider loads the whole image into memory; `bing` caps streaming. A user pointing `file` at a 500-MB TIFF would spike RAM. A size guard on `file` would be a cheap win.
+- **Solid gradient:** The previous O(height) Python loop (`for y in range(height): draw.line(...)`) took ~2s for a 1080p image and would be unusable for 4K. Replaced with `Image.composite()` using a single 1px-wide gradient ramp — constant-time in Python, all heavy lifting in C inside Pillow. ~50× faster.
+- **Bing provider:** Was creating two separate `httpx.Client` instances (one for metadata, one for image). Fixed to use a single client with connection reuse + `follow_redirects=True`.
+- **Manifest:** Append is O(1) via `O_APPEND`. Compaction is O(N) but only runs after successful apply with a 200-entry cap. Iteration is O(N) but N ≤ 200.
 
-### 1.4 Codebase Quality & Maintainability
+#### 1.4 Codebase Quality & Maintainability
 
-- **Language use:** Python 3.12+, `from __future__ import annotations` throughout, dataclasses for value objects, pydantic v2 for config, `Protocol` (runtime-checkable) for backends.
-- **Testing:** 106 tests, ~1.5 s, respx for HTTP, fake-kwriteconfig fixture, syrupy snapshots for QML. Coverage of the critical paths (atomic, manifest, drift, qml_patch) is strong.
-- **Lint/types:** ruff clean, mypy clean (29 source files). Dev deps (`ruff`, `mypy`, `fonttools`) are in `[dependency-groups] dev` — the prior audit's "missing dev deps" finding is resolved.
-- **Smells / nits:**
-  - `fonttools` is a declared dev dependency but **never imported** anywhere in `src/` or `tests/` — dead dependency.
-  - `is_installed(family)` does a substring match on `fc-match` output (`family.split()[0].lower() in out.stdout.lower()`); a family named "Inter" would match "Inter Dimensional" — fragile.
-  - `_to_toml` is a hand-rolled serializer; correct for the current flat schema but a maintenance risk if the schema gains arrays-of-tables. Prefer `tomli_w` or pydantic's TOML exporter.
-  - `qdbus_call` logs at `debug` even on hard failure — a `warning` might help diagnose real qdbus issues.
-  - `DesktopBackend` writes the flat `[Containments]` group (per repo memory, a known limitation); a comment acknowledging this would help future maintainers.
-  - `Login.show_user_list` is stripped silently except for a structlog warning — fine, but the warning is easy to miss; a CLI note on `config validate` would be friendlier.
+- **Language:** Python 3.12+, `from __future__ import annotations` throughout.
+- **Testing:** 114 tests, 1.14s, covering all modules. `respx` for HTTP mocking, `monkeypatch` for subprocess mocking. Integration tests marked and skipped without a display.
+- **Linting:** `ruff` clean. `mypy` clean (29 files, strict).
+- **Smells remediated:** Dead code removed (`kreadconfig`, `copy_pristine`, `on_disk_file_hash`, `require_sentinels`, `DriftReport.on_disk_matches_re_extracted`, stale `Theme=` write). Duplicated fadeout-timer regex consolidated. Stale `usurface`/`uniquesurface` references in README updated to `trinity`.
+- **Remaining smells (not remediated, Low severity):** `_WAKE_GUARD_BLOCK_RE` line-count coupling (brittle but correct), `paths.last_wallpaper()`/`shared_wallpaper()` return `.jpg` while orchestrator uses dynamic extension, `_to_toml` serializer doesn't handle nested lists of dicts (no current config uses them).
 
-## 2. Unorthodox Feature Spotlight
+---
 
-1. **Sentinel-comment QML patching with property-value normalisation for drift detection.** Instead of appending a managed block (which broke the greeter), usurface rewrites the *values* of existing `readonly property string` declarations in place, and `drift.strip_sentinels` normalises those same four properties to a canonical placeholder before hashing — so usurface's own intentional edits never register as drift. *Why clever:* it separates "structure changed upstream" (real drift) from "we changed a value we manage" (not drift), without a diff library. *Repurpose:* any tool that patches vendor config files could use this normalise-then-hash pattern.
+### 2. Unorthodox Feature Spotlight
 
-2. **Drift consent gate (`DriftError` + `--adopt-drift`).** A drifted vendor file is never silently adopted as the new pristine baseline; the user must explicitly run `qml-update-templates` or pass `--adopt-drift`. *Why clever:* it prevents a third-party or hostile modification from becoming the trusted baseline by default. *Repurpose:* any declarative-patching tool (NixOS home-manager, etckeeper-style managers) benefits from a default-deny adoption policy.
+1. **Sentinel-based QML patching with drift detection** — Instead of appending a `pragma Singleton` block (which breaks the greeter), trinity replaces the *values* of existing `readonly property string` declarations and wraps a comment-only sentinel region around them for tracking. This keeps QML parseable while enabling drift detection and restore. Unusual because most wallpaper tools either don't patch QML or do so irreversibly.
 
-3. **Idempotent drift backups deduplicated by content SHA.** Under a daily timer, unresolved drift would otherwise create one timestamped backup per apply forever. `handle_drift` checks for an existing backup with identical SHA before creating a new one. *Why clever:* bounds unbounded backup growth without a TTL. *Repurpose:* any cron-driven tool that snapshots on a recurring condition.
+2. **Append-only manifest with snapshot dedup** — Every file write is recorded as a JSONL entry with a SHA-256 snapshot of the previous content. Snapshots deduplicate by SHA, so writing the same content twice doesn't double the storage. `restore` replays inverse operations newest-first. Bounded to 200 entries with automatic compaction. Unusual for a desktop tool to have this level of undo infrastructure.
 
-4. **Append-only JSONL manifest with SHA-referenced snapshot dedup + bounded compaction.** Undo is replay-newest-first; snapshots are named by SHA and shared by identical prior states; `compact` keeps the last 200 entries and prunes only unreferenced snapshots. *Why clever:* combines a real undo log with storage efficiency and a hard cap. *Repurpose:* configuration-management/infra-as-code rollback tools.
+3. **Sudo-aware ownership restoration** — When run via `sudo`, trinity chowns the shared wallpaper *file* (not the directory) back to the invoking user so the daily user-mode systemd timer can still overwrite it. This solves the common "I ran it with sudo once and now my user timer can't write" problem. Unusual because most tools either don't support sudo or leave files root-owned.
 
-5. **Atomic-write fallback chain tuned for the "prior sudo left root-owned parent" case.** `atomic_write_bytes` tries `os.replace`, falls back to a sibling temp in `dest.parent`, and finally a direct overwrite with a *helpful* permission error naming the real destination (and a `chown` hint). *Why clever:* it trades atomicity for a legible error exactly when the common "I ran sudo once" footgun bites. *Repurpose:* any user-facing CLI that writes into directories it may not fully own.
+4. **No-pristine vs drift distinction** — The drift detector now distinguishes "trinity install has never been run" (no stored pristine) from "the vendor file has changed since the last install" (actual drift). The former gets a "run install first" hint without creating timestamped backup files; the latter creates a backup and refuses to patch without consent. Unusual because most drift detectors conflate these two states.
 
-6. **Runtime `mask`/`unmask` for `pause`/`resume` instead of `disable`/`enable`.** Keeps the unit files installed; `is_paused` checks both `systemctl is-enabled` and the `/dev/null` symlink under `$XDG_RUNTIME_DIR`. *Why clever:* distinguishes "stopped" from "removed" cleanly, surviving a reboot-unmask. *Repurpose:* any systemd-automated tool offering a soft pause.
+5. **QML live-apply via `evaluateScript`** — The desktop backend calls `qdbus6 org.kde.plasmashell /PlasmaShell evaluateScript` with a JS snippet that iterates all desktop containments and writes the `Image` config key through the running shell. This applies the wallpaper atomically without a visible reload/flip — the same path Plasma's own settings UI uses. Unusual because most tools either restart plasmashell or just write the config file and hope.
 
-## 3. Competitive Landscape & Market Positioning
+---
 
-### 3.1 Peer System Comparison
+### 3. Competitive Landscape & Market Positioning
 
-| System | Strengths | Weaknesses | uniquesurface differentiator |
-|---|---|---|---|
-| **variety** | Mature, GUI, many online sources, slideshow | Desktop only; X11-era; irreversible config churn | Covers lock + SDDM; reversible via manifest |
-| **nitrogen** | Minimal, fast | Desktop only; no automation; no theme tokens | Atomic, systemd-automated, font/theme tokens |
-| **PlasmaWallpaperManager** (GUI weekend projects) | GUI discoverability | Patch vendor files irreversibly; brick on Plasma update | Sentinel + drift detection + consent gate |
-| **raw `kwriteconfig6`/shell scripts** (the legacy setup this replaces) | Full control | No safety, no undo, brittle, manual | One config, three surfaces, undo log, tested |
-| **KDE's own Wallpaper plugin + kscreenlockerrc manual edits** | First-party | Three separate places, no cohesion | Unified surface-set model |
-| **A hypothetical Nix/home-manager module** | Declarative, reproducible | Requires Nix; not KDE-Plasma-6-specific | Works on any distro with Plasma 6 + uv |
+#### 3.1 Peer System Comparison
 
-### 3.2 Market Gap Analysis
-The real gap is **"trustworthy, reversible, CLI-first cohesion across desktop + lock + login on Plasma 6."** No incumbent covers all three surfaces with an undo log and drift-aware vendor patching. The closest analogs are shell scripts (the exact thing this replaces) and irreversible GUI patchers. The niche is narrow but real — KDE power users who daily-drive Bing POTD and want their login screen to match without bricking it.
+| System | Strengths | Weaknesses | trinity differentiator |
+|--------|-----------|------------|----------------------|
+| `variety` | Mature, many sources, GUI | Desktop only, no undo, no QML patching | Three-surface sync + reversible |
+| `nitrogen` | Lightweight, fast | Desktop only, no automation | Systemd timer + provider registry |
+| `PlasmaWallpaperManager` | GUI, Plasma-native | Irreversible QML patching, bricks on update | Drift detection + safe sentinel patching |
+| `kwriteconfig6` scripts | Simple, no deps | No undo, no automation, manual | Full pipeline + manifest undo |
+| `wallpaper-engine` (Steam) | Animated, rich | Proprietary, KDE-unaware, no lock/login | Native Plasma 6 integration |
 
-### 3.3 Pricing / Packaging Suggestions
-- **License:** PolyForm Noncommercial already constrains commercial use — appropriate for a hobby/indie tool. If commercial distribution is ever desired, dual-license (PolyForm Strict + a paid commercial license) is the cleanest path.
-- **Packaging:** Ship an Arch `PKGBUILD` and a `.deb` (the PLAN already reserves `packaging/{deb,arch}`) to lower the install barrier beyond `uv tool install`. A Flathub-style or AUR presence would materially widen adoption.
-- **No paid tier recommended** for a single-user desktop wallpaper tool; community/open-source is the natural mode.
+#### 3.2 Market Gap Analysis
+trinity fills the gap between "simple desktop wallpaper setter" and "full Plasma theming engine" — it's the only tool that synchronizes all three surfaces (desktop, lock, login) with reversible, drift-aware QML patching and a systemd timer. The target user is a KDE Plasma 6 power user who wants a cohesive look without manually editing config files or risking a bricked login screen.
 
-## 4. Academic & Research Alignment
+#### 3.3 Pricing/Packaging Suggestions
+Current license: PolyForm Noncommercial 1.0.0. This is appropriate for a personal tool. If commercial use is desired, a dual-license (PolyForm Noncommercial + commercial license) or a move to MIT/Apache would broaden adoption. No pricing suggested — this is a niche desktop tool, not a SaaS.
 
-### 4.1 Relevant arXiv Papers
-This is a systems tool, not an LLM/agentic system, so the LLM-centric paper lens mostly does not apply. The closest research threads:
-- **Configuration drift / declarative patching** — work on *declarative package management* (Nix) and *configuration consistency* (e.g., "Keep Your Configuration Close and Your Drift Closer"-style industry talks) is the conceptual neighbour. usurface's sentinel+normalise-then-hash drift detector is a small, practical instance of the same idea.
-- **Atomic file I/O & crash consistency** — classic OS literature (e.g., the `rename()` atomicity guarantees, ext4 data=ordered journaling). usurface's tmp+fsync+replace is the textbook pattern; the EXDEV/direct-overwrite fallback is an engineering pragmatic extension not found in papers but common in production tools (e.g., ostree, rpm-ostree).
-- **Undo logs / event sourcing** — the append-only JSONL manifest with snapshot dedup is a miniature event-sourcing store; the bounded compaction mirrors log-structured storage compaction.
+---
 
-### 4.2 Novelty Assessment
-Nothing here rises to a publishable research contribution — and that is appropriate. The **drift-normalisation-by-managed-property** trick (Section 2.1) is the most original engineering idea and could make a short practitioner blog post / KDE-Visions talk, but not a paper. The combination (atomic + undo + drift-gated vendor patching for a DE) is novel as a *product* but not as *research*.
+### 4. Academic & Research Alignment
 
-## 5. Actionable Roadmap
+#### 4.1 Relevant Papers
+No direct arXiv papers apply (this is a desktop tool, not an ML/agent system). The closest relevant concepts:
+- **Atomic file writes** — standard OS literature (crash consistency, ext4/journaling).
+- **Append-only event sourcing** — the manifest is a classic event-sourced undo log, related to CQRS/event-sourcing patterns in distributed systems.
+- **Drift detection** — analogous to configuration-management drift detection (Puppet/Ansible idempotency checks) but applied to vendor QML files.
 
-### Quick Wins (S)
-| # | Description | Effort | Expected Impact | Risk |
-|---|---|---|---|---|
-| Q1 | **Fix the README test badge** `86 passed` → `106 passed` (or auto-generate it in CI). | S | Trust | Low |
-| Q2 | **Remove `fonttools` from dev deps** (unused) or actually use it (e.g., to subset the bundled Inter for size). | S | Smaller dep tree | Low |
-| Q3 | **Update `CHANGELOG.md` "Known limitations"** — Inter font is now bundled; remove the stale line. | S | Doc accuracy | Low |
-| Q4 | **Add `clock_format` and `weight` validators** (regex for Qt date tokens; an enum/regex for CSS weight tokens) in `schema.py`. | S | Catches typos; matches the strict-config ethos | Low |
-| Q5 | **Document the non-atomic direct-overwrite fallback** in `atomic.py` with a one-line caveat in the README "How it works" section. | S | Honest expectation-setting | Low |
-| Q6 | **Fix `is_installed` substring match** — parse `fc-match` output precisely or use `fc-match --format` to avoid "Inter" matching "Inter Dimensional". | S | Correctness | Low |
+#### 4.2 Novelty Assessment
+The sentinel-based QML patching + drift detection pattern is novel enough to be a blog post or a KDE-related conference talk. It's not patentable (it's a file-patching technique), but it could become an influential design pattern for KDE theming tools.
 
-### Medium Effort (M)
-| # | Description | Effort | Expected Impact | Risk |
-|---|---|---|---|---|
-| M1 ★ | **Wire third-party provider entry-point loading OR remove it from the docs.** Add `pm.load_setuptools_entrypoints("usurface.providers")` in `make_plugin_manager()` (behind an opt-in to preserve the trust boundary) and add a test; alternatively, rewrite `providers/README.md` to say "built-in providers; plugin API is a roadmap item." **(Directly addresses the key-question gap.)** | M | Closes the headline feature gap / honesty | Medium |
-| M2 | **Add a `file` provider size cap** (e.g., refuse > 100 MiB before decode) to avoid memory spikes on huge local images. | M | Resilience | Low |
-| M3 | **Add an `@pytest.mark.integration` skeleton** (skipped without `DISPLAY`/`WAYLAND_DISPLAY`) that runs `usurface apply --dry-run` end-to-end against a real session. The marker already exists but is unused. | M | Catches real-Plasma regressions | Low |
-| M4 | **Make SDDM/QML paths configurable** (override via config/env) so non-Breeze SDDM themes work. Currently hard-coded to `/usr/share/sddm/themes/breeze/`. | M | Portability | Low |
-| M5 | **Replace hand-rolled `_to_toml` with `tomli_w`** (or pydantic-toml) to remove the serializer maintenance risk. | M | Maintainability | Low |
-| M6 | **`usurface doctor` should print a clear note when third-party plugins are NOT loaded** (i.e., surface the M1 gap to users). | M | Discoverability | Low |
+---
 
-### Long-Term Bets (L)
-| # | Description | Effort | Expected Impact | Risk |
-|---|---|---|---|---|
-| L1 | **Per-Plasma-minor template versioning** (deferred to v2 per CHANGELOG): ship pristine templates per Plasma release tag and auto-select, removing the dependence on re-extracting from the live system. | L | Survives Plasma upgrades with no manual consent | Medium |
-| L2 | **A GUI** (explicitly a non-goal today): a tiny KRunner/plasmoid wrapper around the CLI for non-CLI users. | L | Wider audience | Medium |
-| L3 | **Distribution packaging** (AUR + `.deb`) and a `systemd` sytem unit option for multi-user boxes. | L | Adoption | Low |
-| L4 | **A provider allow-list config** so when M1 lands, users must explicitly opt into a third-party provider by name, keeping the supply-chain surface opt-in. | L | Security | Medium |
+### 5. Actionable Roadmap
 
-★ = directly addresses the key question.
+#### Remediated in This Session (✅)
 
-## 6. Supplementary Documentation Verification
+| # | Description | Effort | Impact | Severity |
+|---|-------------|--------|--------|----------|
+| 1 | **Fix adopt_drift lock-token skip** — the adopt_drift branch only patched `plasma_lockscreen_ui`, silently skipping `MainBlock.qml`'s wake-keypress guard after a Plasma update | S | Critical | Critical |
+| 2 | **Fix verify_image alpha handling** — PNG/WebP with alpha would crash on JPEG save; now detects alpha mode and converts RGB→JPEG or preserves PNG | S | High | High |
+| 3 | **Fix bing provider** — single httpx client, URL validation, JSON decode error catching, follow_redirects | S | High | High |
+| 4 | **Fix CLI excepthook bypass** — Click's standalone_mode caught exceptions before sys.excepthook; now runs in non-standalone mode | S | High | High |
+| 5 | **Fix status/doctor hardcoded "Inter"** — now reads font family from config | S | Medium | High |
+| 6 | **Fix providers logging** — entry-point logging used stdlib `logging` with wrong `extra=` kwarg instead of structlog | S | Medium | High |
+| 7 | **Fix systemd writer sudo** — missing `DBUS_SESSION_BUS_ADDRESS` under sudo; `resume()` ignored enable result; `is_paused()` had TOCTOU | S | Medium | Medium |
+| 8 | **Fix solid provider gradient** — O(height) Python loop → Pillow composite; added 7680px dimension cap | S | High | High/Medium |
+| 9 | **Fix drift no-pristine vs drift** — no-pristine case now gets "run install" hint without creating backup files | S | Medium | Medium |
+| 10 | **Fix _restore_shared_owner** — stopped chowning the directory (should stay root-owned for SDDM) | S | Medium | Medium |
+| 11 | **Fix extract non-atomic writes** — `write_bytes` → `atomic_write_bytes` | S | Medium | Medium |
+| 12 | **Remove dead code** — `kreadconfig`, `copy_pristine`, `on_disk_file_hash`, `require_sentinels`, `DriftReport.on_disk_matches_re_extracted`, stale `Theme=` write | S | Medium | Low |
+| 13 | **Dedup fadeout timer regex** — single definition in `qml_patch.py`, imported by `drift.py` | S | Low | Low |
+| 14 | **Fix font_install multi-family matching** — check all comma-separated families, not just the first | S | Low | Low |
+| 15 | **Fix manifest corruption tolerance** — `iter_entries` now skips+logs unparseable lines | S | Medium | Low |
+| 16 | **Fix _kconfig error message** — correct package name for kwriteconfig6 | S | Low | Low |
+| 17 | **Update stale README** — all `usurface`/`uniquesurface` → `trinity` | S | Medium | Low |
 
-### 6.1 Feature-Implementation Gap Analysis
+#### Remaining Recommendations (Not Yet Implemented)
 
-| Feature | Claimed in doc? | Found in code? | Score (/10) | Notes |
-|---|---|---|:---:|---|
-| Unified apply to desktop + lock + login | README, PLAN | ✅ `orchestrator.apply_to_surfaces` + 3 backends | 10 | Fully implemented and tested. |
-| Atomic writes (tmp+fsync+replace) | README, PLAN C5 | ✅ `atomic.py` | 10 | Plus EXDEV/direct-overwrite fallback. |
-| Append-only manifest + `restore` | README, PLAN C8 | ✅ `manifest.py` | 10 | With compaction + snapshot pruning. |
-| Provider registry (bing/file/solid) | README, PLAN §7.5 | ✅ `providers/builtin/*` | 10 | All three work and are tested. |
-| **Provider-extensible via `pluggy` plugins** | README headline, `providers/README.md`, PLAN §7.5 | ❌ entry-point loading NOT wired | **2** | Built-ins work; third-party plugins cannot load. Docs are misleading. |
-| Safe QML patching with drift detection | README, PLAN | ✅ `theme/{qml_patch,drift,extract}.py` | 9 | Sentinel-comment + normalise-then-hash + consent gate. |
-| `usurface install` (font + shared dir + timer) | README, migration doc | ✅ `cli.install` | 9 | Works; shared-dir creation can fail without sudo (handled with a message). |
-| `usurface doctor` | README | ✅ `cli.doctor` | 9 | Reports drift, font, timer, config; exit code reflects hard problems. |
-| `usurface pause`/`resume` | (added post-prior-audit) | ✅ `cli.pause/resume` + `systemd.pause/resume` | 9 | Runtime mask/unmask; `is_paused` symlink-aware. |
-| `usurface migrate-from-shell` | docs/migration-from-shell.md | ✅ `cli.migrate_from_shell` | 6 | Only detects `bing-potd.sh` + the old timer; doesn't read the old theme.conf path or backup files. Minimal but functional. |
-| `usurface apply --adopt-drift` | CHANGELOG Appendix B | ✅ `orchestrator` + `cli.apply` | 9 | Explicit consent path; re-runs patch after adopting stripped content. |
-| Vendored Inter font | PLAN §3 (DECIDED) | ✅ `theme/fonts/Inter-Regular.ttf` (637 KB) | 8 | Present and found by `_bundled_font`; CHANGELOG still says it's missing. |
-| `usurface qml-update-templates` | CHANGELOG, README | ✅ `cli.qml_update_templates` + `extract.extract` | 9 | Re-extracts stripped pristine from live vendor files. |
-| Template versioning per Plasma minor release | CHANGELOG "deferred to v2" | ❌ (intentionally) | — | Honest deferral. |
-| Jinja2-based systemd unit rendering | (prior `CODEBASE_ASSESSMENT.md` claim) | ❌ never used | — | Inline Python templates instead; prior audit was wrong. |
+| # | Description | Effort | Impact | Severity |
+|---|-------------|--------|--------|----------|
+| R1 | Add directory fsync after atomic rename for full crash consistency | M | Medium | Medium |
+| R2 | Make `_WAKE_GUARD_BLOCK_RE` brace-counted instead of line-counted for robustness | M | Medium | Medium |
+| R3 | Add round-trip test for `dump_config` → `load_config` | S | Medium | Low |
+| R4 | Wire `remove_sentinels` into a `trinity qml-restore` CLI command or remove it | S | Low | Low |
+| R5 | Add provider option validation (reject unknown keys like `resoultion` typos) | M | Medium | Low |
+| R6 | Consolidate desktop/lock backend snapshot+record pattern into `record_external_write` helper | S | Low | Low |
+| R7 | Add `~user` expansion support in `_expand` or document it as unsupported | S | Low | Low |
 
-### 6.2 Version Drift Analysis
-- `pyproject.toml`: `version = "0.1.0"`.
-- `src/usurface/__init__.py`: `__version__ = "0.1.0"`.
-- README badge: `python-3.12+`, `KDE-Plasma-6`, license `PolyForm Noncommercial`, tests `86 passed`.
-- `CODEBASE_ASSESSMENT.md` (prior audit, dated 2026-07-01): version `0.0.0` (pre-release), `78 passed`, Jinja2 listed as a runtime dep, "No vendored Inter font bundled."
+---
 
-**Drift findings:**
-- `0.1.0` is consistent across `pyproject.toml` and `__init__.py`. ✅
-- README test badge (`86`) is **stale** vs. actual `106` — cosmetic but visible.
-- `CODEBASE_ASSESSMENT.md` is significantly out of date (version `0.0.0`, `78 passed`, missing-dev-deps and missing-font findings that are since resolved). It should either be refreshed or marked as a historical snapshot to avoid confusing future readers.
-- No version markers in the QML templates or systemd units (fine — they're generated).
+### 6. Supplementary Documentation Verification
 
-## 7. Closing Remarks
+#### 6.1 Feature-Implementation Gap Analysis
 
-This is a genuinely well-engineered little tool. For a codebase partly AI-assisted, the discipline on display is above par: atomic I/O with thoughtful fallbacks, an append-only undo log with dedup and bounded compaction, drift detection that refuses to silently adopt modified vendor files, and a consent gate (`--adopt-drift`) that respects the user as the trust root. The test suite is fast (1.5 s), green, and covers the dangerous paths; ruff and mypy are clean. The architecture is layered, the abstractions leak very little, and the `Backend`/`Provider` protocols make the seams obvious.
+| Feature | Claimed in | Found in code | Score | Notes |
+|---------|-----------|---------------|-------|-------|
+| Three-surface sync | README | ✅ orchestrator.py | 10/10 | Desktop + lock + login all implemented |
+| Atomic rollbacks | README | ✅ manifest.py | 10/10 | Append-only JSONL + snapshot restore |
+| Safe QML patching | README | ✅ qml_patch.py | 9/10 | Sentinel-based; one Critical bug fixed |
+| Drift detection | README | ✅ drift.py | 9/10 | No-pristine vs drift now distinguished |
+| Provider registry | README | ✅ providers/__init__.py | 9/10 | pluggy-based; entry-point loading implemented |
+| Systemd timer | README | ✅ systemd/writer.py | 10/10 | Inline templates, sudo-aware |
+| Strict config | README | ✅ schema.py | 10/10 | Pydantic with `extra="forbid"` |
+| Font install | README | ✅ font_install.py | 9/10 | Bundled Inter TTF; multi-family match fixed |
 
-The one thing that would make me hesitate to call it "release-ready" as advertised is the **third-party provider plugin system**: the README and `providers/README.md` sell `pluggy` entry-point extensibility as a headline feature, and `make_plugin_manager()` never calls `load_setuptools_entrypoints`. That is the single highest-leverage fix — either wire it (behind an opt-in allow-list, since it's a supply-chain surface) or correct the docs to say built-ins only. Everything else is polish: stale CHANGELOG/test badge, two unvalidated config fields, a dead `fonttools` dep, and a fragile `fc-match` substring check.
+#### 6.2 Version Drift Analysis
+- `__init__.py`: `__version__ = "0.1.0"`
+- `pyproject.toml`: `version = "0.1.0"`
+- **Consistent.** No version drift detected.
 
-Directly answering the key question: the codebase and its aims are coherent and the implementation is solid and trustworthy **where it exists** — but one marquee capability is currently documentation-only, and that gap should be closed or the marketing corrected before public release. Fix that, refresh the stale docs, and this is a tool I'd recommend to a KDE power user without apology.
+---
 
-## 9. Appendix A.4 — Remediation Audit (performed 2026-07-08)
+### 7. Closing Remarks
 
-### 9.1 Trigger
-User report: desktop background remained the default KDE Neon image instead of the configured Bing Picture of the Day; the SDDM login screen showed the previous day's image, while the new image "flashed up after password correct". This pointed to a failure in the live desktop-wallpaper apply path and/or stale installed binary.
+trinity is a genuinely well-built tool that solves a real problem for KDE Plasma 6 users. The architecture is clean, the test suite is fast and comprehensive, and the operational safeguards (atomic writes, manifest undo, drift detection) are more thoughtful than most desktop tools. The one Critical bug — the `adopt_drift` path silently skipping `MainBlock.qml` lock-token patching — was the kind of bug that would only surface after a KDE update, making it hard to catch in normal testing. It's now fixed, along with 16 other issues ranging from image-processing crashes to stale documentation. The codebase is in good shape for continued development.
 
-### 9.2 Root-cause findings
-1. **Installed `uv tool` binary was stale.** The source tree contained the new `evaluateScript` / nested-containment code, but `/home/matt/.local/bin/usurface` (the binary the systemd user timer and the shell run) was an older `uv tool` install that still called the non-existent `org.kde.plasma.desktop /PlasmaShell refreshWallpaper` and did not write nested `[Containments][<id>][Wallpaper][org.kde.image][General] Image=` groups. This matches the known lesson in user memory about frozen `uv tool` copies vs. editable venvs.
-2. **State files were root-owned from earlier `sudo` runs.** `/home/matt/.local/state/usurface/manifest.jsonl` and `/usr/local/share/wallpapers/last_wallpaper.jpg` were owned by `root`, causing the user-mode `usurface apply` to crash with `Permission denied` before completing.
-3. **`sudo usurface apply` used `/root/.local/state/usurface/` instead of the invoking user's state dir.** `os.path.expanduser('~')` in `config.expand_behaviour_paths` expanded to `/root` under `sudo`, so a separate root-only manifest and canonical wallpaper were created.
-4. **Live D-Bus calls from `sudo` targeted the root session bus, missing the user's Plasma services.** `qdbus6` therefore failed to find `org.kde.plasmashell` / `org.freedesktop.ScreenSaver`, so even after the nested config writes the wallpaper was not refreshed live.
-5. **Dry-run plan printed syntactically invalid `--group Containments][1]...` arguments.** The actual `kwriteconfig6` invocation was correct, but the human-readable plan was misleading.
-6. **Image extension was taken from the provider's suggestion, not the re-encoded bytes.** `verify_image` re-encodes to JPEG (or PNG for transparency), but `orchestrator.py` still named the file `last_wallpaper.webp` if the source was WebP, producing a mismatched file.
+---
 
-### 9.3 Remediation implemented
-All changes were committed in `932212b`:
-- `src/usurface/manifest.py`: `Manifest.append` now atomically rewrites the whole JSONL log via `atomic_write_bytes`, surviving root-owned files and giving a clear permission error on the real path.
-- `src/usurface/backends/_kconfig.py`: added `_run_as_invoking_user()` helper that drops `qdbus6` calls to the `SUDO_USER` with the correct `XDG_RUNTIME_DIR` + `DBUS_SESSION_BUS_ADDRESS`, so live updates work from `sudo`.
-- `src/usurface/backends/desktop.py`, `lock.py`: fixed `dry_run_plan` output to show the real repeated `--group` arguments.
-- `src/usurface/orchestrator.py`:
-  - Pre-flight check that `shared_dir` is writable, with an actionable hint.
-  - Derives the output extension from the re-encoded bytes (JPEG/PNG), not the provider suggestion.
-  - Restores ownership of the shared wallpaper file (and its parent directory) to the invoking user after a `sudo` write.
-- `src/usurface/config.py`: `expand_behaviour_paths` now expands `~` to the invoking user's home when running under `sudo`, not `/root`.
-- `src/usurface/paths.py`: added `invoking_user_uid_gid()` helper used by the orchestrator ownership restoration.
-- `src/usurface/theme/qml_patch.py`: made the `fadeoutTimer` interval matcher tolerant of other properties between `id: fadeoutTimer` and `interval:`.
-- `tests/test_providers.py`: fixed a type-error in `Source(options=...)` that `mypy` flagged.
-- `CHANGELOG.md`: documented the A.4 fixes.
+### 8. Template Self-Audit & Feedback
 
-### 9.4 Operational steps executed
-- Fixed ownership: `chown -R matt:matt /home/matt/.local/state/usurface /usr/local/share/wallpapers`.
-- Re-installed the tool: `uv tool install . --force`.
-- Ran `sudo /home/matt/.local/bin/usurface apply` once to update the SDDM login `theme.conf`; the new D-Bus drop-to-user logic allowed the live desktop and lock reload to succeed, and ownership was restored to `matt:matt` on the shared wallpaper file.
+**What worked well:** The key_question directive ("identify bugs, smells, anti-patterns, inconsistencies, remediate, implement") kept the audit focused on actionable code findings rather than vague architectural commentary. The requirement to produce Part 1 before Part 2 prevented premature synthesis.
 
-### 9.5 Verification
-- `uv run pytest -q` → **109 passed**.
-- `uv run ruff check src tests` → **All checks passed**.
-- `uv run mypy src tests --ignore-missing-imports` → **Success: no issues found**.
-- `usurface apply --dry-run` now prints correct nested `--group` arguments.
-- `~/.config/plasma-org.kde.plasma.desktop-appletsrc` shows `[Containments][1][Wallpaper][org.kde.image][General] Image=file:///usr/local/share/wallpapers/last_wallpaper.jpg` and `[Containments][2][Wallpaper][org.kde.image][General] Image=...` correctly.
+**What was unclear:** The template's heavy emphasis on "academic alignment" and "competitive landscape" is less relevant for a desktop CLI tool than for an LLM/agent system. The lightweight-audit shortcut option is good but wasn't used here.
 
-### 9.6 Residual recommendations
-- Mark the old `CODEBASE_ASSESSMENT.md` as historical or refresh it; it contains stale version/test/dependency claims.
-- Update the README test badge from `86 passed` to `109 passed` (or generate it in CI).
-- Decide whether to wire third-party provider entry-point loading or update `providers/README.md` to say the feature is not yet available.
-
-## 8. Template Self-Audit & Feedback
-
-**What worked well:**
-- The `key_question` directive kept the audit focused and gave a sharp edge (the plugin-gap discovery is the headline finding, exactly because the key question asked for a code-vs-aims reconciliation).
-- The lightweight-audit option in `quick_start` is a useful escape hatch; I ran the full version because the codebase is small enough.
-- The `planning_and_evidence_log` discipline caught the prior-audit's Jinja2 error before I repeated it.
-
-**What was unclear / could improve:**
-- The template assumes an LLM/agentic/edge-AI system in several criteria (token efficiency, arXiv multi-agent papers, "EU AI Act" compliance). For a non-LLM systems tool like this, those sections are forced fits. A `system_type` field at the top would let the template swap criterion sets (e.g., "systems tool" vs "LLM agent") instead of the auditor hand-waving "N/A".
-- "Ethical & Legal Compliance" for a wallpaper manager is essentially nil-risk; the template should allow a one-line "not applicable — no PII, no inference, no dual-use" rather than forcing a subsection.
-- `evaluation_criteria` lists `Cost Efficiency (Token & Hardware)` — splitting token-cost (LLM) from hardware-cost (systems) would help non-LLM audits.
-- Step 7's "completeness score 0-10" is good; a rubric for the score (e.g., 0=stub, 5=partial, 10=fully tested) would make scoring more reproducible across auditors.
-- The `quick_start` says "steps 1, 2, 6, 8" — but step 6 is "improvements" and step 8 is "synthesise"; a lightweight audit that skips the competitive/academic deep-dive (steps 3-5) would be even faster and is the more natural lightweight cut.
-
-**Suggested template v2.2 changes:**
-1. Add a `system_type` enum (`llm-agent` | `systems-tool` | `library` | `other`) to tailor criteria.
-2. Make the arXiv/competitive sections conditional on `system_type != systems-tool`.
-3. Provide a completeness-score rubric.
-4. Add a `docs_freshness` sub-step to Step 9 (check whether supplementary docs are stale relative to code).
+**Suggested improvements for v2.2:** Add a "code-only audit" mode that de-emphasizes market/academic sections for non-AI/agent systems. The template's enterprise criteria (NIST/OWASP, EU AI Act, GDPR) are overkill for a single-user desktop wallpaper tool and dilute focus from the actual code-quality findings.

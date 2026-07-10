@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from usurface import paths
-from usurface.theme import drift, extract
+from trinity import paths
+from trinity.theme import drift, extract
 
 
 @pytest.fixture
@@ -46,9 +46,7 @@ def test_drift_sentinel_region_ignored(seeded_templates: Path) -> None:
     """If the only change is between our sentinels, drift must NOT fire."""
     original_text = seeded_templates.read_text()
     sentinel_block = (
-        "/* @usurface:start */\n"
-        "QtObject { property string a: 'b' }\n"
-        "/* @usurface:end */"
+        "/* @trinity:start */\nQtObject { property string a: 'b' }\n/* @trinity:end */"
     )
     modified = original_text.rstrip("\n") + "\n\n" + sentinel_block + "\n"
     seeded_templates.write_text(modified, encoding="utf-8")
@@ -96,10 +94,116 @@ def test_drift_hard_fail_when_stored_pristine_diverges(
 
 
 def test_strip_sentinels_removes_block() -> None:
-    text = "header\n/* @usurface:start */\nbody\n/* @usurface:end */\nfooter"
+    text = (
+        "// managed by trinity — do not edit\n"
+        "/* @trinity:start */\n"
+        "body\n"
+        "/* @trinity:end */\n"
+        "footer"
+    )
     out = drift.strip_sentinels(text)
-    assert "usurface:start" not in out
-    assert "header" in out and "footer" in out
+    assert "trinity:start" not in out
+    assert "managed by trinity" not in out
+    assert "header" not in out
+    assert "footer" in out
+
+
+def test_strip_sentinels_handles_block_without_header() -> None:
+    """A file patched before the header comment was added still has the
+    sentinel markers but no leading ``// managed by trinity`` line.
+    Stripping the sentinel must still work and must not leave a stray
+    empty line at the boundary."""
+    text = "header\n/* @trinity:start */\nbody\n/* @trinity:end */\nfooter"
+    out = drift.strip_sentinels(text)
+    assert "trinity:start" not in out
+    assert "body" not in out
+    assert "header" in out
+    assert "footer" in out
+    # No double-newline left behind
+    assert "\n\n\n" not in out
+
+
+def test_strip_sentinels_does_not_touch_managed_values() -> None:
+    """Regression: ``strip_sentinels`` must only strip the sentinel block.
+
+    It must NOT normalise the four managed font/theme property values
+    or the ``fadeoutTimer`` interval — those normalisations live in
+    :func:`drift.normalize_managed_values` and must only be applied
+    when computing the drift hash, never during pristine extraction.
+    Running them on a fresh vendor file would corrupt the stored
+    baseline (e.g. turn ``interval: 10000`` into
+    ``interval: @trinity@managed@`` in the pristine template).
+    """
+    text = (
+        'readonly property string fontFamily: "DejaVu Sans"\n'
+        "        Timer {\n"
+        "            id: fadeoutTimer\n"
+        "            interval: 10000\n"
+        "            onTriggered: { doSomething(); }\n"
+        "        }\n"
+    )
+    out = drift.strip_sentinels(text)
+    assert 'fontFamily: "DejaVu Sans"' in out, (
+        "strip_sentinels must leave the fontFamily literal untouched"
+    )
+    assert "interval: 10000" in out, (
+        "strip_sentinels must leave the fadeoutTimer interval untouched"
+    )
+    assert "@trinity@managed@" not in out
+
+
+def test_normalize_managed_values_handles_real_fadeout_timer() -> None:
+    """Regression: the fadeoutTimer normaliser must handle the real
+    ``LockScreenUi.qml`` layout where an ``onTriggered: { ... }`` block
+    sits between the ``id:`` line and the ``interval:`` line. The
+    previous regex used ``[^}]*?`` which stopped at the first ``}``
+    (the opening brace of ``onTriggered: {``) and so never matched the
+    real file, producing a false-positive drift on every apply.
+    """
+    text = (
+        "        Timer {\n"
+        "            id: fadeoutTimer\n"
+        "            interval: 10000\n"
+        "            onTriggered: {\n"
+        "                lockScreenRoot.uiVisible = false;\n"
+        "            }\n"
+        "        }\n"
+    )
+    out = drift.normalize_managed_values(text)
+    assert "interval: @trinity@managed@" in out, (
+        "normaliser must rewrite the interval even with onTriggered in between"
+    )
+    assert "interval: 10000" not in out
+
+
+def test_drift_check_ignores_fadeout_timer_rewrite(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The drift check must consider a re-patched fadeoutTimer interval
+    as matching the pristine, even when the interval number differs
+    from the stored pristine (because the on-disk value reflects the
+    user's ``on_idle_dim_seconds`` config)."""
+    target = tmp_path / "templates"
+    target.mkdir()
+    monkeypatch.setattr(paths, "templates_dir", lambda: target)
+    pristine = (
+        "        Timer {\n"
+        "            id: fadeoutTimer\n"
+        "            interval: 10000\n"
+        "            onTriggered: { doSomething(); }\n"
+        "        }\n"
+    )
+    (target / "plasma_lockscreen_ui.qml").write_text(pristine, encoding="utf-8")
+    vendor = tmp_path / "LockScreenUi.qml"
+    vendor.write_text(
+        pristine.replace("10000", "15000"),  # user set on_idle_dim=15
+        encoding="utf-8",
+    )
+    report = drift.check("plasma_lockscreen_ui", vendor)
+    assert report.on_disk_matches_pristine is True, (
+        f"unexpected drift: pristine={report.pristine_sha} "
+        f"on_disk={report.on_disk_stripped_sha}"
+    )
 
 
 def test_handle_drift_raises_instead_of_adopting(
@@ -121,9 +225,7 @@ def test_handle_drift_raises_instead_of_adopting(
         drift.handle_drift("sddm_login", seeded_templates)
 
     # 4. A backup was created with the drifted content.
-    backups = list(
-        seeded_templates.parent.glob("Login.qml.usurface.drift.*")
-    )
+    backups = list(seeded_templates.parent.glob("Login.qml.trinity.drift.*"))
     assert len(backups) >= 1
     assert backups[0].read_text(encoding="utf-8") == modified_text
 
