@@ -6,6 +6,43 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added (Phase 3 — generic JSON-API provider + shared SSRF-hardened HTTP)
+
+- New `json-api` built-in provider. Config-driven recipe that GETs a
+  JSON metadata document, resolves an RFC 6901 JSON Pointer to an
+  image URL, then downloads the image. Powers arbitrary metadata-then-
+  image flows (NASA APOD, Wikimedia POTD, custom internal APIs) without
+  writing a new Python plugin. Recipe fields: `metadata_url` (HTTPS,
+  `AnyHttpUrl` validated at config load), `image_url_pointer`
+  (RFC 6901), `params`, `headers`, `timeout` (0 < t ≤ 300).
+- New `src/trinity/providers/builtin/_http.py` — shared SSRF-hardened
+  HTTP machinery used by both `bing` and `json-api`:
+    - HTTPS-only for both metadata and image URLs.
+    - DNS pre-resolution with IP pinning (defends against DNS rebinding
+      and reduces the trust surface to the resolved address).
+    - IPv4 and IPv6 safe-address check (rejects private, loopback,
+      link-local, reserved, multicast, IPv4-mapped-IPv6).
+    - Per-hop redirect loop (5 hop cap) with re-validation of scheme,
+      HTTPS, and SSRF safety on every hop.
+    - Size caps: 5 MiB metadata, 50 MiB image (configurable).
+    - Pre-flight `Content-Length` cap on the image response so a hostile
+      server can't trick us into reading 50 MiB before the cap check.
+    - Header and query-param count/length caps to bound config-driven
+      attack surface.
+- The `bing` provider has been refactored to use the shared
+  `_http.fetch_metadata_json()` and `_http.download_image()` helpers
+  (no behaviour change for callers; tests still cover the same
+  scenarios plus the new shared SSRF paths).
+- `resolve_pointer()` — full RFC 6901 implementation, including `~0`
+  and `~1` escape decoding, numeric array indices, and clear errors
+  for out-of-range / missing tokens.
+- New tests: 22 cases covering happy path, relative-URL resolution,
+  pointer escape sequences, non-string pointer targets, HTTPS-only
+  enforcement, private-IP rejection, redirect-cap rejection, oversize
+  metadata + image rejection, IPv4/IPv6 `Content-Length` parsing, port
+  preservation in pinned URLs, and a hypothesis property test for
+  `resolve_pointer`.
+
 ### Added (Phase 2 — theme_tokens opt-in + setup)
 
 - New `[surface.theme_tokens] enabled` opt-in switch. When `false` (the

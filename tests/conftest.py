@@ -8,6 +8,8 @@ from pathlib import Path
 import pytest
 import respx
 
+from trinity.providers.builtin import _http
+
 
 @pytest.fixture(autouse=True)
 def _isolate_xdg_env(tmp_path, monkeypatch):
@@ -37,3 +39,13 @@ def respx_mock():
     """A respx mock router scoped to the test."""
     with respx.mock(assert_all_called=False) as router:
         yield router
+
+
+@pytest.fixture(autouse=True)
+def _no_dns_pinning(monkeypatch):
+    """Disable DNS-to-IP pinning in ``_http`` for tests.
+
+    respx mocks by hostname, not IP.  Production code still does the
+    IP pinning — this is purely a test isolation aid.
+    """
+    monkeypatch.setattr(_http, "_resolve_safely_hook", lambda host: host)

@@ -135,6 +135,11 @@ _SOLID_INFO = ProviderInfo(
     description="Solid colour or gradient.",
     builtin=True,
 )
+_JSON_API_INFO = ProviderInfo(
+    name="json-api",
+    description="Generic HTTPS JSON-metadata → image URL recipe.",
+    builtin=True,
+)
 
 
 def make_plugin_manager() -> pluggy.PluginManager:
@@ -192,12 +197,18 @@ def _register_entry_point_plugins(pm: pluggy.PluginManager) -> None:
 def _register_builtins(pm: pluggy.PluginManager) -> None:
     """Register the built-in providers shipped in this package."""
     # Imported lazily to avoid a circular dependency on schema.
-    from trinity.providers.builtin import bing, file, solid
+    from trinity.providers.builtin import bing, file, json_api, solid
 
     for plugin in (
         _BuiltinPlugin("bing", _BING_INFO, bing.fetch, bing.BingOptions),
         _BuiltinPlugin("file", _FILE_INFO, file.fetch, file.FileOptions),
         _BuiltinPlugin("solid", _SOLID_INFO, solid.fetch, solid.SolidOptions),
+        _BuiltinPlugin(
+            "json-api",
+            _JSON_API_INFO,
+            json_api.fetch,
+            json_api.JsonApiOptions,
+        ),
     ):
         pm.register(plugin)
 

@@ -39,11 +39,12 @@ user_dir   = "~/.local/state/trinity"
 
 The provider plugin to fetch a wallpaper from. Built-in values:
 
-| Name   | Description                              |
-|--------|------------------------------------------|
-| `bing` | Bing Picture of the Day (HTTP).          |
-| `file` | A local image file (path in `options`).  |
-| `solid`| Solid colour or 2-stop gradient.         |
+| Name      | Description                                                       |
+|-----------|-------------------------------------------------------------------|
+| `bing`    | Bing Picture of the Day (HTTPS).                                  |
+| `file`    | A local image file (path in `options`).                           |
+| `solid`   | Solid colour or 2-stop gradient.                                  |
+| `json-api`| Generic metadata-then-image recipe (HTTPS, JSON Pointer).         |
 
 `options` is validated against the provider's pydantic schema at
 config-load time. Each built-in provider declares a strict schema
@@ -69,7 +70,53 @@ Opt-in switch for the QML patching machinery.
 | `index`      | int    | `0`           | Day offset (0 = today, 1 = yesterday).  |
 | `timeout`    | float  | `30.0`        | Per-request timeout in seconds.         |
 
-Downloads are capped at 50 MiB.
+Downloads are capped at 50 MiB. The provider enforces HTTPS, IP-pinned
+DNS resolution (private/loopback/link-local/reserved addresses are
+rejected), and a 5-hop redirect cap.
+
+### `json-api` options
+
+Generic recipe for "GET a JSON metadata document, extract an image URL
+with a JSON Pointer, then download the image." Most picture-of-the-day
+APIs follow this shape.
+
+| Key                | Type   | Default  | Notes                                                     |
+|--------------------|--------|----------|-----------------------------------------------------------|
+| `metadata_url`     | string | —        | Required. HTTPS only. Validated as `AnyHttpUrl` at load.  |
+| `image_url_pointer`| string | —        | Required. RFC 6901 JSON Pointer (e.g. `/image/url`).      |
+| `params`           | table  | `{}`     | Optional query string for the metadata request.           |
+| `headers`          | table  | `{}`     | Optional HTTP headers (e.g. `User-Agent`).                |
+| `timeout`          | float  | `30.0`   | Per-request timeout (0 < t ≤ 300).                        |
+
+All the security guardrails from `bing` apply: HTTPS-only, IP-pinned
+DNS, private/loopback rejection, 5-hop redirect cap, 5 MiB metadata
+cap, 50 MiB image cap, header/param count and length caps.
+
+Relative image URLs in the metadata are resolved against the metadata
+URL, not the request origin.
+
+**Example — Wikimedia Picture of the Day (no key required):**
+
+```toml
+[surface.source]
+provider = "json-api"
+
+[surface.source.options]
+metadata_url     = "https://api.wikimedia.org/feed/v1/wikipedia/en/image/potd/featured/2026/07/10"
+image_url_pointer = "/image/url"
+```
+
+**Example — NASA Astronomy Picture of the Day (DEMO_KEY rate-limited):**
+
+```toml
+[surface.source]
+provider = "json-api"
+
+[surface.source.options]
+metadata_url     = "https://api.nasa.gov/planetary/apod"
+image_url_pointer = "/url"
+params           = { api_key = "DEMO_KEY", thumbs = "false" }
+```
 
 ### `file` options
 

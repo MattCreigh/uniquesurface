@@ -25,7 +25,7 @@ def test_registry_registers_three_builtins() -> None:
     pm = make_plugin_manager()
     infos = list_providers(pm)
     names = {i.name for i in infos}
-    assert names == {"bing", "file", "solid"}
+    assert names == {"bing", "file", "json-api", "solid"}
 
 
 def test_third_party_entry_point_plugin_is_loaded(
@@ -102,7 +102,7 @@ def test_broken_entry_point_is_skipped(monkeypatch: pytest.MonkeyPatch) -> None:
     pm = make_plugin_manager()
     names = {i.name for i in list_providers(pm)}
     assert "broken-plugin" not in names
-    assert {"bing", "file", "solid"} == names
+    assert {"bing", "file", "json-api", "solid"} == names
 
 
 def test_get_provider_returns_matching_plugin() -> None:
@@ -336,7 +336,7 @@ def test_bing_wraps_network_errors(respx_mock: respx.router.MockRouter) -> None:
 def test_bing_wraps_http_status_errors(respx_mock: respx.router.MockRouter) -> None:
     """A 5xx from Bing surfaces as ProviderError."""
     respx_mock.get(bing._METADATA_URL).mock(return_value=httpx.Response(503))
-    with pytest.raises(ProviderError, match="HTTP request failed"):
+    with pytest.raises(ProviderError, match="HTTP 503"):
         bing.fetch({})
 
 
@@ -565,3 +565,363 @@ def test_schema_accepted_options_accepted_by_fetch() -> None:
         result = validate_provider_options(pm, source)
         assert result is not None
         assert result == validated.model_dump()
+
+
+# --- json-api ---------------------------------------------------------
+
+
+def test_json_api_fetches_metadata_then_image(
+    respx_mock: respx.router.MockRouter,
+) -> None:
+    """The json-api provider resolves a JSON pointer, follows the
+    absolute image URL, and returns the image bytes."""
+    from trinity.providers.builtin import json_api
+
+    image_bytes = b"\xff\xd8\xff" + b"jsonapi-image"
+
+    respx_mock.get("https://example.com/potd.json").mock(
+        return_value=httpx.Response(
+            200, json={"image": {"url": "https://example.com/wp.jpg"}}
+        )
+    )
+    respx_mock.get("https://example.com/wp.jpg").mock(
+        return_value=httpx.Response(
+            200, content=image_bytes, headers={"content-type": "image/jpeg"}
+        )
+    )
+
+    img = json_api.fetch(
+        {
+            "metadata_url": "https://example.com/potd.json",
+            "image_url_pointer": "/image/url",
+        }
+    )
+    assert img.data == image_bytes
+    assert img.content_type == "image/jpeg"
+    assert img.suggested_extension == ".jpg"
+
+
+def test_json_api_resolves_relative_image_url(
+    respx_mock: respx.router.MockRouter,
+) -> None:
+    """A relative image URL in the metadata is resolved against the
+    metadata URL, not the localhost."""
+    from trinity.providers.builtin import json_api
+
+    image_bytes = b"\x89PNG\r\n\x1a\n" + b"png-bytes"
+
+    respx_mock.get("https://example.com/api/potd.json").mock(
+        return_value=httpx.Response(200, json={"image": {"url": "/media/wp.png"}})
+    )
+    respx_mock.get("https://example.com/media/wp.png").mock(
+        return_value=httpx.Response(
+            200, content=image_bytes, headers={"content-type": "image/png"}
+        )
+    )
+
+    img = json_api.fetch(
+        {
+            "metadata_url": "https://example.com/api/potd.json",
+            "image_url_pointer": "/image/url",
+        }
+    )
+    assert img.data == image_bytes
+    assert img.content_type == "image/png"
+    assert img.suggested_extension == ".png"
+
+
+def test_json_api_unescapes_pointer_tokens() -> None:
+    """RFC 6901: '~0' and '~1' are unescaped after splitting on '/'."""
+    from trinity.providers.builtin import _http
+
+    doc = {"a/b": {"c~d": "value"}}
+    assert _http.resolve_pointer(doc, "/a~1b/c~0d") == "value"
+
+
+def test_json_api_pointer_root_returns_doc_itself() -> None:
+    """The empty string pointer refers to the entire document."""
+    from trinity.providers.builtin import _http
+
+    doc = {"k": "v"}
+    assert _http.resolve_pointer(doc, "") is doc
+
+
+def test_json_api_pointer_array_index(
+    respx_mock: respx.router.MockRouter,
+) -> None:
+    """Numeric tokens in a pointer index into JSON arrays."""
+    from trinity.providers.builtin import json_api
+
+    respx_mock.get("https://example.com/potd.json").mock(
+        return_value=httpx.Response(
+            200, json={"media": [{"url": "https://example.com/x.jpg"}]}
+        )
+    )
+    respx_mock.get("https://example.com/x.jpg").mock(
+        return_value=httpx.Response(
+            200, content=b"\xff\xd8\xff" + b"x", headers={"content-type": "image/jpeg"}
+        )
+    )
+    img = json_api.fetch(
+        {
+            "metadata_url": "https://example.com/potd.json",
+            "image_url_pointer": "/media/0/url",
+        }
+    )
+    assert img.data == b"\xff\xd8\xff" + b"x"
+
+
+def test_json_api_rejects_non_string_pointer_target(
+    respx_mock: respx.router.MockRouter,
+) -> None:
+    """If the pointer resolves to a number/object/array, raise
+    ProviderError — only string targets are image URLs."""
+    from trinity.providers.builtin import json_api
+
+    respx_mock.get("https://example.com/potd.json").mock(
+        return_value=httpx.Response(200, json={"image": 42})
+    )
+    with pytest.raises(ProviderError, match="non-string"):
+        json_api.fetch(
+            {
+                "metadata_url": "https://example.com/potd.json",
+                "image_url_pointer": "/image",
+            }
+        )
+
+
+def test_json_api_rejects_http_metadata_url() -> None:
+    """The JsonApiOptions schema enforces https (AnyHttpUrl) at config
+    load time."""
+    from pydantic import ValidationError
+
+    from trinity.providers.builtin.json_api import JsonApiOptions
+
+    # http:// fails AnyHttpUrl validation outright.
+    with pytest.raises(ValidationError):
+        JsonApiOptions(
+            metadata_url="http://example.com/potd.json",  # type: ignore[arg-type]
+            image_url_pointer="/url",
+        )
+
+
+def test_json_api_rejects_private_ip_metadata(
+    respx_mock: respx.router.MockRouter,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If the metadata hostname resolves to a private/loopback address,
+    the SSRF defense raises — even with a fully-formed HTTPS URL."""
+    from trinity.providers.builtin import _http, json_api
+
+    def _raise(host: str) -> str:
+        raise _http.SSRFError(
+            f"host {host!r} resolves only to private/reserved addresses"
+        )
+
+    # Override the production hook (also overridden in conftest) so the
+    # test resolver behaves like production and rejects any address.
+    monkeypatch.setattr(_http, "_resolve_safely_hook", _raise)
+    with pytest.raises(ProviderError, match=r"private|reserved"):
+        json_api.fetch(
+            {
+                "metadata_url": "https://example.com/potd.json",
+                "image_url_pointer": "/url",
+            }
+        )
+
+
+def test_json_api_rejects_redirect_cap(
+    respx_mock: respx.router.MockRouter,
+) -> None:
+    """A redirect chain longer than the cap is rejected."""
+    from trinity.providers.builtin import json_api
+
+    # 5 hops, each returning 302 to a fresh /hop path; respx matches
+    # by path, so register N routes.  Cap is 5, so the 6th hop triggers.
+    for i in range(10):
+        respx_mock.get(f"https://example.com/hop{i}").mock(
+            return_value=httpx.Response(
+                302, headers={"location": f"https://example.com/hop{i + 1}"}
+            )
+        )
+    with pytest.raises(ProviderError, match="redirect cap"):
+        json_api.fetch(
+            {
+                "metadata_url": "https://example.com/hop0",
+                "image_url_pointer": "/url",
+            }
+        )
+
+
+def test_json_api_rejects_oversize_metadata(
+    respx_mock: respx.router.MockRouter,
+) -> None:
+    """Metadata over the 5 MiB cap is rejected before parsing."""
+    from trinity.providers.builtin import _http, json_api
+
+    respx_mock.get("https://example.com/potd.json").mock(
+        return_value=httpx.Response(
+            200,
+            content=b'{"image":{"url":"x"}}' + b" " * (_http._MAX_METADATA_BYTES + 1),
+            headers={"content-type": "application/json"},
+        )
+    )
+    with pytest.raises(ProviderError, match="metadata"):
+        json_api.fetch(
+            {
+                "metadata_url": "https://example.com/potd.json",
+                "image_url_pointer": "/image/url",
+            }
+        )
+
+
+def test_json_api_rejects_oversize_image(
+    respx_mock: respx.router.MockRouter,
+) -> None:
+    """An image with Content-Length over the cap is rejected pre-body."""
+    from trinity.providers.builtin import _http, json_api
+
+    respx_mock.get("https://example.com/potd.json").mock(
+        return_value=httpx.Response(
+            200, json={"image": {"url": "https://example.com/wp.jpg"}}
+        )
+    )
+    respx_mock.get("https://example.com/wp.jpg").mock(
+        return_value=httpx.Response(
+            200,
+            content=b"\x00" * 1024,
+            headers={
+                "content-type": "image/jpeg",
+                "content-length": str(_http._MAX_IMAGE_BYTES + 1),
+            },
+        )
+    )
+    with pytest.raises(ProviderError, match="download cap"):
+        json_api.fetch(
+            {
+                "metadata_url": "https://example.com/potd.json",
+                "image_url_pointer": "/image/url",
+            }
+        )
+
+
+# --- _http SSRF helper unit tests --------------------------------------
+
+
+def test_http_pin_host_ipv4() -> None:
+    from trinity.providers.builtin import _http
+
+    out = _http._pin_host("https://example.com/path?q=1", "93.184.216.34")
+    assert out == "https://93.184.216.34/path?q=1"
+
+
+def test_http_pin_host_ipv6_brackets() -> None:
+    from trinity.providers.builtin import _http
+
+    out = _http._pin_host("https://example.com/path", "2a02:26f0:fd00:8::58dd:78da")
+    assert out == "https://[2a02:26f0:fd00:8::58dd:78da]/path"
+
+
+def test_http_pin_host_preserves_port() -> None:
+    from trinity.providers.builtin import _http
+
+    out = _http._pin_host("https://example.com:8443/x", "10.0.0.1")
+    assert out == "https://10.0.0.1:8443/x"
+
+
+def test_http_pin_host_preserves_query() -> None:
+    from trinity.providers.builtin import _http
+
+    out = _http._pin_host("https://example.com/x?a=1&b=2", "10.0.0.1")
+    assert out == "https://10.0.0.1/x?a=1&b=2"
+
+
+def test_http_sanitise_headers_caps_count() -> None:
+    from trinity.providers.builtin import _http
+
+    headers = {f"h{i}": "v" for i in range(_http._MAX_HEADERS + 50)}
+    out = _http._sanitise_headers(headers)
+    assert len(out) == _http._MAX_HEADERS
+
+
+def test_http_sanitise_headers_drops_long_values() -> None:
+    from trinity.providers.builtin import _http
+
+    long_val = "x" * (_http._MAX_HEADER_VALUE_LEN + 1)
+    out = _http._sanitise_headers({"a": long_val, "b": "ok"})
+    assert out == {"b": "ok"}
+
+
+def test_http_sanitise_params_caps_count() -> None:
+    from trinity.providers.builtin import _http
+
+    params = {f"p{i}": "v" for i in range(_http._MAX_PARAMS + 50)}
+    out = _http._sanitise_params(params)
+    assert len(out) == _http._MAX_PARAMS
+
+
+def test_http_is_safe_address_rejects_private() -> None:
+    from trinity.providers.builtin import _http
+
+    assert _http._is_safe_address("10.0.0.1") is False
+    assert _http._is_safe_address("192.168.1.1") is False
+    assert _http._is_safe_address("127.0.0.1") is False
+    assert _http._is_safe_address("169.254.0.1") is False
+    assert _http._is_safe_address("::1") is False
+    assert _http._is_safe_address("fc00::1") is False
+    assert _http._is_safe_address("not-an-ip") is False
+
+
+def test_http_is_safe_address_allows_public() -> None:
+    from trinity.providers.builtin import _http
+
+    assert _http._is_safe_address("93.184.216.34") is True
+    assert _http._is_safe_address("2606:2800:220:1:248:1893:25c8:1946") is True
+
+
+# --- hypothesis property test for resolve_pointer ---------------------
+
+
+def test_resolve_pointer_property() -> None:
+    """Random JSON documents and pointers always resolve, and the
+    resolved value is the one we set when we built the pointer."""
+    from hypothesis import HealthCheck, given, settings
+    from hypothesis import strategies as st
+
+    from trinity.providers.builtin import _http
+
+    @given(
+        st.lists(
+            st.tuples(
+                st.text(
+                    alphabet=st.characters(
+                        blacklist_categories=("Cs", "Cc"),
+                        blacklist_characters="/~",
+                    ),
+                    min_size=1,
+                    max_size=8,
+                ),
+                st.integers(min_value=0, max_value=10_000),
+            ),
+            min_size=1,
+            max_size=5,
+        )
+    )
+    @settings(max_examples=50, suppress_health_check=[HealthCheck.too_slow])
+    def _inner(pairs: list[tuple[str, int]]) -> None:
+        # Build a doc that contains every (key, value) pair at /pairs/i/...
+        # and a non-string sentinel to ensure we only return the requested
+        # token.
+        doc: dict[str, object] = {}
+        for i, (k, v) in enumerate(pairs):
+            token = f"k{i}"
+            doc[token] = {"name": k, "value": v}
+        if not pairs:
+            return
+        idx = len(pairs) - 1
+        token = f"k{idx}"
+        pointer = f"/{token}/value"
+        result = _http.resolve_pointer(doc, pointer)
+        assert result == pairs[idx][1]
+
+    _inner()

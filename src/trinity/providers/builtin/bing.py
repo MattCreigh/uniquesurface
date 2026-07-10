@@ -95,73 +95,38 @@ def fetch(options: dict[str, Any]) -> FetchedImage:
     }
 
     try:
-        return _fetch_image(timeout=timeout, headers=headers, params=params, opts=opts)
+        from trinity.providers.builtin import _http
+
+        meta = _http.fetch_metadata_json(
+            _METADATA_URL, params=params, headers=headers, timeout=timeout
+        )
     except httpx.HTTPError as exc:
         # Covers timeouts, DNS/connection failures, and 4xx/5xx statuses.
         # Wrapped so the CLI reports a clean provider failure instead of
         # an "unexpected error" traceback for a transient network problem.
         raise ProviderError(f"bing provider: HTTP request failed: {exc}") from exc
 
+    try:
+        image_meta = meta["images"][0]
+        rel_url = image_meta["url"]
+    except (KeyError, IndexError, TypeError) as exc:
+        raise ProviderError(f"unexpected Bing metadata shape: {meta!r}") from exc
 
-def _fetch_image(
-    *,
-    timeout: float,
-    headers: dict[str, str],
-    params: dict[str, str],
-    opts: dict[str, Any],
-) -> FetchedImage:
-    with httpx.Client(
-        timeout=timeout, headers=headers, follow_redirects=True
-    ) as client:
-        meta_resp = client.get(_METADATA_URL, params=params)
-        meta_resp.raise_for_status()
-        try:
-            meta = meta_resp.json()
-        except ValueError as exc:
-            raise ProviderError(
-                f"Bing metadata response is not valid JSON: {exc}"
-            ) from exc
-        try:
-            image_meta = meta["images"][0]
-            rel_url = image_meta["url"]
-        except (KeyError, IndexError, TypeError) as exc:
-            raise ProviderError(f"unexpected Bing metadata shape: {meta!r}") from exc
+    if not isinstance(rel_url, str) or not rel_url.startswith("/"):
+        raise ProviderError(f"Bing returned non-relative image URL: {rel_url!r}")
+    image_url = "https://www.bing.com" + rel_url
 
-        if not isinstance(rel_url, str) or not rel_url.startswith("/"):
-            raise ProviderError(f"Bing returned non-relative image URL: {rel_url!r}")
-        image_url = "https://www.bing.com" + rel_url
+    # Force the requested resolution if the URL has the placeholder.
+    if "{resolution}" in image_url:
+        image_url = image_url.replace("{resolution}", str(opts["resolution"]))
 
-        # Force the requested resolution if the URL has the placeholder.
-        if "{resolution}" in image_url:
-            image_url = image_url.replace("{resolution}", str(opts["resolution"]))
+    from trinity.providers.builtin import _http
 
-        # Stream the image in the same client so we reuse the connection
-        # pool and cap the download size without loading it all at once.
-        with client.stream("GET", image_url) as img_resp:
-            img_resp.raise_for_status()
-            # Check Content-Length up front when the server provides it.
-            declared = img_resp.headers.get("content-length")
-            if declared is not None:
-                try:
-                    if int(declared) > _MAX_IMAGE_BYTES:
-                        raise ProviderError(
-                            f"Bing image exceeds the {_MAX_IMAGE_BYTES}-byte "
-                            f"download cap (Content-Length={declared})"
-                        )
-                except ValueError:
-                    pass  # non-integer Content-Length; rely on byte count
-            data = bytearray()
-            for chunk in img_resp.iter_bytes():
-                data.extend(chunk)
-                if len(data) > _MAX_IMAGE_BYTES:
-                    raise ProviderError(
-                        f"Bing image exceeds the {_MAX_IMAGE_BYTES}-byte "
-                        "download cap while streaming"
-                    )
-            content_type = img_resp.headers.get("content-type", "image/jpeg")
-
+    data, content_type = _http.download_image(
+        image_url, headers=headers, timeout=timeout
+    )
     return FetchedImage(
-        data=bytes(data),
+        data=data,
         content_type=content_type,
         suggested_extension=".jpg",
     )
