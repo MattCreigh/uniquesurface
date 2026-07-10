@@ -244,6 +244,22 @@ def status() -> None:
         f"{'yes' if is_installed(font_family) else 'no'}"
     )
     click.echo(f"timer paused: {'yes' if systemd.is_paused() else 'no'}")
+
+    # Report theme tokens status and any QML drift.  When theme_tokens
+    # is disabled, skip the per-file drift loop entirely — the
+    # per-file Pydantic Field has been migrated to opt-in, and walking
+    # the vendor files would just spam "QML drift: none" for users who
+    # don't care.
+    theme_tokens_enabled = True
+    if cfg.exists():
+        try:
+            theme_tokens_enabled = _load_config(None).surface.theme_tokens.enabled
+        except Exception:
+            pass
+    click.echo(f"theme tokens: {'enabled' if theme_tokens_enabled else 'disabled'}")
+    if not theme_tokens_enabled:
+        return
+
     # Report any QML drift so it's visible without running doctor.
     tdir = paths.templates_dir()
     if tdir.is_dir():
@@ -328,6 +344,13 @@ provider = "bing"
 mkt = "en-US"
 resolution = "1920x1080"
 
+[surface.theme_tokens]
+# Opt-in: enable QML patching for login/lock screen font and theme tokens.
+# When disabled (the default), apply skips all QML patching — the simple
+# wallpaper-sync use case. Set enabled = true to use the font/lock/login
+# token sections below.
+enabled = false
+
 [surface.fonts]
 family = "Inter"
 weight = "Normal"
@@ -347,6 +370,56 @@ user_dir = "~/.local/state/trinity"
 """
     atomic_write_text(target, text, mode=0o644)
     click.echo(f"wrote {target}")
+
+
+# --- setup ------------------------------------------------------------
+
+
+@main.command()
+@click.option("--yes", is_flag=True, help="Skip all confirmation prompts.")
+@click.pass_context
+def setup(ctx: click.Context, yes: bool) -> None:
+    """First-time setup: config init → install → apply --dry-run → apply.
+
+    Chains the three commands a new user needs in order.  Skips
+    ``config init`` if a config already exists.  The dry-run output is
+    always shown; the final ``apply`` requires confirmation unless
+    ``--yes`` is passed.
+    """
+    from trinity import paths
+
+    if paths.config_file().exists():
+        click.echo(f"config exists at {paths.config_file()} — skipping config init")
+    else:
+        click.echo("==> Step 1/4: generating starter config")
+        ctx.invoke(config_init, force=False)
+
+    click.echo()
+    click.echo("==> Step 2/4: installing (font, shared dir, systemd timer)")
+    click.echo("    (may require sudo for system-level changes)")
+    try:
+        ctx.invoke(install, yes=yes)
+    except SystemExit as exc:
+        if exc.code not in (None, 0):
+            click.echo(
+                f"install exited with code {exc.code}; continuing to dry-run "
+                "anyway (the timer may simply be unprivileged).",
+                err=True,
+            )
+
+    click.echo()
+    click.echo("==> Step 3/4: dry-run apply (preview without writing)")
+    ctx.invoke(apply, dry_run=True, config_path=None, adopt_drift=False)
+
+    if not yes and not click.confirm(
+        "Dry-run looks good — apply the wallpaper now?", default=True
+    ):
+        click.echo("aborted. Run `trinity apply` when ready.")
+        return
+
+    click.echo()
+    click.echo("==> Step 4/4: applying wallpaper")
+    ctx.invoke(apply, dry_run=False, config_path=None, adopt_drift=False)
 
 
 # --- provider ---------------------------------------------------------
@@ -460,11 +533,14 @@ def doctor() -> None:
         click.echo(f"[warn] shared dir not writable: {sw}")
 
     font_family = "Inter"
+    theme_tokens_enabled = True
     if cfg.exists():
         try:
             from trinity.config import load_config as _load_config
 
-            font_family = _load_config(None).surface.fonts.family
+            loaded = _load_config(None)
+            font_family = loaded.surface.fonts.family
+            theme_tokens_enabled = loaded.surface.theme_tokens.enabled
         except Exception:
             # Best-effort: doctor reports the config's presence above;
             # a parse failure falls back to checking the default font.
@@ -480,6 +556,13 @@ def doctor() -> None:
         click.echo("[info] timer is paused")
     else:
         click.echo(f"[ok]   timer enabled state: {_systemd.is_enabled()}")
+
+    click.echo(
+        f"[info] theme tokens: "
+        f"{'enabled' if theme_tokens_enabled else 'disabled (QML checks skipped)'}"
+    )
+    if not theme_tokens_enabled:
+        sys.exit(0 if ok else 1)
 
     from trinity.theme import drift, extract
 
@@ -581,13 +664,30 @@ def install(yes: bool) -> None:
     Requires root for the font install and shared-dir creation steps.
     """
     from trinity import paths, systemd
+    from trinity.config import load_config as _load_config
     from trinity.theme import extract
     from trinity.theme.font_install import install as install_font
 
-    click.echo("==> Extracting pristine QML templates")
-    written = extract.extract()
-    for p in written:
-        click.echo(f"    {p}")
+    # theme_tokens is opt-in; only extract QML templates if enabled.
+    tokens_enabled = True
+    if paths.config_file().exists():
+        try:
+            tokens_enabled = _load_config(None).surface.theme_tokens.enabled
+        except Exception:
+            # If config is broken, proceed with extraction (don't block
+            # install on a broken config — the user can run `trinity
+            # config validate` separately).
+            pass
+
+    if tokens_enabled:
+        click.echo("==> Extracting pristine QML templates")
+        written = extract.extract()
+        for p in written:
+            click.echo(f"    {p}")
+    else:
+        click.echo(
+            "==> Extracting pristine QML templates (skipped: theme_tokens disabled)"
+        )
 
     click.echo("==> Installing Inter font (root recommended)")
     if not yes and not click.confirm(

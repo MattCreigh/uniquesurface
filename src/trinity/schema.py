@@ -180,6 +180,28 @@ class Lock(_StrictModel):
     suppress_wake_keypress: bool = Field(default=True)
 
 
+class ThemeTokens(_StrictModel):
+    """Opt-in switch for the fragile QML-token patching machinery.
+
+    When ``enabled = false`` (the default), ``apply`` skips all QML
+    patching and drift checks, and ``install`` skips template extraction.
+    The font/lock/login token config sections remain valid but inert —
+    a warning is emitted if non-default values are set while the feature
+    is disabled, so config isn't silently ignored.
+
+    Tier-1 users (wallpaper-sync only) don't pay the complexity tax for
+    the QML-token system; Tier-2 users opt in explicitly.
+    """
+
+    enabled: bool = Field(
+        default=False,
+        description=(
+            "Enable QML patching and drift detection. Default false: the "
+            "simple wallpaper-sync use case skips this fragile machinery."
+        ),
+    )
+
+
 class Behaviour(_StrictModel):
     """File-layout controls."""
 
@@ -202,17 +224,44 @@ class Surface(_StrictModel):
     login: Login = Field(default_factory=Login)
     lock: Lock = Field(default_factory=Lock)
     behaviour: Behaviour = Field(default_factory=Behaviour)
+    theme_tokens: ThemeTokens = Field(default_factory=ThemeTokens)
 
     @model_validator(mode="before")
     @classmethod
     def _migrate_legacy(cls, data: Any) -> Any:
-        """Accept v1 only for now; bail on unknown schema versions."""
-        if isinstance(data, dict) and "schema_version" in data:
-            sv = data["schema_version"]
-            if sv != SCHEMA_VERSION:
-                raise ValueError(
-                    f"unsupported schema_version={sv}; this build understands "
-                    f"version {SCHEMA_VERSION}"
+        """Accept v1 configs and migrate from "always on" to opt-in.
+
+        Pre-Phase-2 configs had theme-token patching always on with no
+        switch.  We auto-migrate to ``theme_tokens.enabled = true`` for
+        any loaded config that *doesn't* declare the key and has the
+        v1 schema version, so existing users don't silently lose
+        patching.  New configs written by ``config init`` opt out by
+        default — Tier-1 users don't pay the complexity tax.  A
+        structured deprecation log explains the migration.
+        """
+        if isinstance(data, dict):
+            if "schema_version" in data:
+                sv = data["schema_version"]
+                if sv != SCHEMA_VERSION:
+                    raise ValueError(
+                        f"unsupported schema_version={sv}; this build understands "
+                        f"version {SCHEMA_VERSION}"
+                    )
+            # Auto-migrate pre-Phase-2 configs: enable tokens unless
+            # the user has explicitly opted out.
+            if "theme_tokens" not in data:
+                data = dict(data)
+                data["theme_tokens"] = {"enabled": True}
+                from trinity.logging_setup import get_logger
+
+                get_logger(__name__).warning(
+                    "config_theme_tokens_migrated",
+                    hint=(
+                        "theme_tokens is now opt-in; this existing config was "
+                        "auto-migrated to enabled=true. Set "
+                        "[surface.theme_tokens] enabled=false in config to opt "
+                        "out (the font/lock/login token sections become inert)."
+                    ),
                 )
         return data
 

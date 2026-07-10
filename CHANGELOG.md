@@ -6,6 +6,26 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added (Phase 2 — theme_tokens opt-in + setup)
+
+- New `[surface.theme_tokens] enabled` opt-in switch. When `false` (the
+  default for new configs), `apply` skips all QML patching and drift
+  checks, and `install` skips template extraction. The `fonts`, `login`,
+  and `lock` config sections become inert when disabled. Pre-existing
+  configs (v1, no key) are auto-migrated to `enabled = true` with a
+  one-time deprecation log so existing users don't silently lose
+  patching.
+- Non-default token values with `theme_tokens.enabled = false` produce
+  a structured warning (not a silent ignore).
+- `trinity status` and `trinity doctor` report the theme-tokens state
+  and skip drift checks when disabled.
+- `config init` now writes `enabled = false` in the starter config.
+- New `trinity setup` command: chains `config init` → `install` →
+  `apply --dry-run` → confirm → `apply`. The recommended path for
+  first-time users; `--yes` skips all prompts.
+- README quickstart now uses `trinity setup` as the canonical entry
+  point. `docs/config-reference.md` documents the new key.
+
 ### Added (Phase 1 — provider-declared option schemas)
 
 - New `trinity_provider_options_schema` pluggy hookspec. Each built-in

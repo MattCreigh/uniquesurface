@@ -14,6 +14,9 @@ schema_version = 1   # required
 provider = "bing"
 options = { ... }
 
+[surface.theme_tokens]  # optional, defaults shown
+enabled = false        # opt-in: enable QML patching and drift detection
+
 [surface.fonts]      # optional, defaults shown
 family = "Inter"
 weight = "Normal"
@@ -42,8 +45,20 @@ The provider plugin to fetch a wallpaper from. Built-in values:
 | `file` | A local image file (path in `options`).  |
 | `solid`| Solid colour or 2-stop gradient.         |
 
-`options` is a free-form table whose schema depends on the provider.
-Validation is performed by the provider at fetch time.
+`options` is validated against the provider's pydantic schema at
+config-load time. Each built-in provider declares a strict schema
+(extra keys are rejected). See `trinity provider info <name>` for the
+option table.
+
+## `[surface.theme_tokens]`
+
+Opt-in switch for the QML patching machinery.
+
+- `enabled`: when `false` (the default), `apply` skips all QML patching
+  and drift checks, and `install` skips template extraction. The
+  `fonts`, `login`, and `lock` sections become inert — set `enabled = true`
+  to use them. Pre-existing configs that don't declare this key are
+  auto-migrated to `enabled = true` with a one-time deprecation log.
 
 ### `bing` options
 

@@ -46,6 +46,27 @@ def default_backends(*, accent_color: str | None = None) -> list[Backend]:
     return [DesktopBackend(), LockBackend(), LoginBackend(accent_color=accent_color)]
 
 
+def _has_non_default_token_values(config: Config) -> bool:
+    """Return True if any font/lock/login token differs from its default.
+
+    Used to warn when theme_tokens is disabled but the user has set
+    non-default token values — they'd be silently ignored.
+    """
+    from trinity.schema import Fonts, Lock, Login
+
+    default_fonts = Fonts()
+    default_login = Login()
+    default_lock = Lock()
+    surface = config.surface
+    if surface.fonts != default_fonts:
+        return True
+    if surface.login != default_login:
+        return True
+    if surface.lock != default_lock:
+        return True
+    return False
+
+
 def _restore_shared_owner(path: Path) -> None:
     """If running via sudo, chown ``path`` back to the invoking user.
 
@@ -222,8 +243,26 @@ def apply_to_surfaces(
                     plan.append(f"  hint: {exc.hint}")
                 _log.warning("backend_failed", backend=backend.name, error=str(exc))
 
-    # QML Patching
-    if dry_run:
+    # QML Patching (gated by theme_tokens.enabled; opt-in feature).
+    if not expanded.surface.theme_tokens.enabled:
+        plan.append(
+            "theme tokens: disabled "
+            "(set [surface.theme_tokens] enabled = true to enable QML patching)"
+        )
+        if _has_non_default_token_values(expanded):
+            _log.warning(
+                "theme_tokens_disabled_with_custom_values",
+                hint=(
+                    "font/lock/login token values are set but theme_tokens is "
+                    "disabled; they are ignored. Enable with "
+                    "[surface.theme_tokens] enabled = true."
+                ),
+            )
+            plan.append(
+                "  warning: font/lock/login token values are set but ignored "
+                "while theme_tokens is disabled"
+            )
+    elif dry_run:
         for name, vendor_path in extract.DEFAULT_TARGETS:
             if vendor_path.is_file():
                 plan.append(f"patch QML {name} ({vendor_path}) with font/theme tokens")

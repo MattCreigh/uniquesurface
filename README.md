@@ -6,6 +6,7 @@
   [![KDE Plasma 6](https://img.shields.io/badge/KDE-Plasma%206-1d99f3.svg?logo=kde)](https://kde.org/plasma-desktop/)
   [![License: GPL v3](https://img.shields.io/badge/License-GPL%20v3-blue.svg)](LICENSE)
   [![CI](https://github.com/MattCreigh/trinity/actions/workflows/ci.yml/badge.svg)](https://github.com/MattCreigh/trinity/actions/workflows/ci.yml)
+
 </div>
 
 > [!NOTE]
@@ -56,29 +57,32 @@ This installs the `trinity` console script on your PATH.
 
 ### First-time setup
 
-Generate a starter config:
+The easiest path is the all-in-one `trinity setup` command, which chains
+config generation → install → dry-run → apply:
 
 ```sh
-trinity config init
+trinity setup            # interactive; pass --yes to skip prompts
 ```
 
-Edit `~/.config/trinity/config.toml` to pick a provider (default: Bing POTD). See the [config reference](docs/config-reference.md) for every key.
-
-Then install the bundled font, shared wallpaper directory, and systemd timer:
+Or step by step:
 
 ```sh
-sudo trinity install
+trinity config init      # write a starter config
+# edit ~/.config/trinity/config.toml (see docs/config-reference.md)
+sudo trinity install     # font, shared dir, systemd timer (root for system parts)
+trinity apply --dry-run  # preview without writing
+trinity apply            # desktop + lock screen + login (login needs root)
 ```
 
 > The `sudo` is only for the system-wide font, `/usr/local/share/wallpapers`, and SDDM `theme.conf` steps; the systemd user timer is enabled under your own desktop user.
 
-### Applying the wallpaper
+### Theme tokens (opt-in)
 
-```sh
-trinity apply            # desktop + lock screen + login (login needs root)
-sudo trinity apply       # apply all three surfaces, including SDDM login
-trinity apply --dry-run  # preview without writing
-```
+The default config disables QML patching (`[surface.theme_tokens]
+enabled = false`) — the simple wallpaper-sync use case doesn't need it.
+Set `enabled = true` if you want trinity to patch the login/lock screen
+font and theme tokens (the `fonts`, `login`, and `lock` config sections
+below only take effect when this is enabled).
 
 ### Other commands
 
