@@ -87,6 +87,21 @@ class ProviderHooks:
         """
         raise NotImplementedError
 
+    @hookspec(firstresult=True)
+    def trinity_provider_probe(self, options: dict[str, Any]) -> str | None:
+        """Return an opaque change token for the source, cheaply.
+
+        A probe must be much cheaper than a full fetch (a metadata-only
+        request, a local ``stat``, ...).  Two probes returning the same
+        token mean the image is unchanged, so ``apply --if-changed`` can
+        skip the download and the surface writes entirely.
+
+        Returning ``None`` (or not implementing the hook) means the
+        provider cannot probe; callers fall back to a full fetch.
+        Tokens are opaque — callers only ever compare them for equality.
+        """
+        raise NotImplementedError
+
 
 class _BuiltinPlugin:
     """Adapter exposing a built-in provider as a pluggy plugin."""
@@ -97,11 +112,13 @@ class _BuiltinPlugin:
         info: ProviderInfo,
         fetch: Callable[[dict[str, Any]], FetchedImage],
         options_schema: type[BaseModel] | None = None,
+        probe: Callable[[dict[str, Any]], str | None] | None = None,
     ) -> None:
         self._name = name
         self._info = info
         self._fetch = fetch
         self._options_schema = options_schema
+        self._probe = probe
 
     @hookimpl
     def trinity_provider_name(self) -> str:
@@ -118,6 +135,12 @@ class _BuiltinPlugin:
     @hookimpl
     def trinity_provider_options_schema(self) -> type[BaseModel] | None:
         return self._options_schema
+
+    @hookimpl
+    def trinity_provider_probe(self, options: dict[str, Any]) -> str | None:
+        if self._probe is None:
+            return None
+        return self._probe(options)
 
 
 _BING_INFO = ProviderInfo(
@@ -138,6 +161,11 @@ _SOLID_INFO = ProviderInfo(
 _JSON_API_INFO = ProviderInfo(
     name="json-api",
     description="Generic HTTPS JSON-metadata → image URL recipe.",
+    builtin=True,
+)
+_RSS_INFO = ProviderInfo(
+    name="rss",
+    description="RSS 2.0 / Atom image feed (enclosure or Media RSS).",
     builtin=True,
 )
 
@@ -197,18 +225,22 @@ def _register_entry_point_plugins(pm: pluggy.PluginManager) -> None:
 def _register_builtins(pm: pluggy.PluginManager) -> None:
     """Register the built-in providers shipped in this package."""
     # Imported lazily to avoid a circular dependency on schema.
-    from trinity.providers.builtin import bing, file, json_api, solid
+    from trinity.providers.builtin import bing, file, json_api, rss, solid
 
     for plugin in (
-        _BuiltinPlugin("bing", _BING_INFO, bing.fetch, bing.BingOptions),
-        _BuiltinPlugin("file", _FILE_INFO, file.fetch, file.FileOptions),
-        _BuiltinPlugin("solid", _SOLID_INFO, solid.fetch, solid.SolidOptions),
+        _BuiltinPlugin("bing", _BING_INFO, bing.fetch, bing.BingOptions, bing.probe),
+        _BuiltinPlugin("file", _FILE_INFO, file.fetch, file.FileOptions, file.probe),
+        _BuiltinPlugin(
+            "solid", _SOLID_INFO, solid.fetch, solid.SolidOptions, solid.probe
+        ),
         _BuiltinPlugin(
             "json-api",
             _JSON_API_INFO,
             json_api.fetch,
             json_api.JsonApiOptions,
+            json_api.probe,
         ),
+        _BuiltinPlugin("rss", _RSS_INFO, rss.fetch, rss.RssOptions, rss.probe),
     ):
         pm.register(plugin)
 
@@ -233,6 +265,14 @@ def _call_fetch(plugin: Any, options: dict[str, Any]) -> FetchedImage:
     if fetch_fn is None:
         raise AttributeError(f"{plugin!r} has no trinity_provider_fetch hook")
     return cast(FetchedImage, fetch_fn(options))
+
+
+def _call_probe(plugin: Any, options: dict[str, Any]) -> str | None:
+    """Call the probe hook on one plugin; None if the plugin has none."""
+    probe_fn = getattr(plugin, "trinity_provider_probe", None)
+    if probe_fn is None:
+        return None
+    return cast("str | None", probe_fn(options))
 
 
 def get_provider(pm: pluggy.PluginManager, name: str) -> Any:
@@ -310,3 +350,17 @@ def fetch_from_source(pm: pluggy.PluginManager, source: Source) -> FetchedImage:
     validated = validate_provider_options(pm, source)
     options = validated if validated is not None else dict(source.options.model_dump())
     return _call_fetch(plugin, options)
+
+
+def probe_from_source(pm: pluggy.PluginManager, source: Source) -> str | None:
+    """Return the provider's change token for ``source``, or ``None``.
+
+    ``None`` means the provider cannot probe cheaply (no hook, or the
+    hook declined); callers fall back to a full fetch.  Provider
+    failures propagate as :class:`ProviderError` — callers decide
+    whether a failed probe blocks or degrades to a full fetch.
+    """
+    plugin = get_provider(pm, source.provider)
+    validated = validate_provider_options(pm, source)
+    options = validated if validated is not None else dict(source.options.model_dump())
+    return _call_probe(plugin, options)

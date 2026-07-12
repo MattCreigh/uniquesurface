@@ -101,6 +101,22 @@ def shared_wallpapers_dir() -> Path:
     return Path("/usr/local/share/wallpapers")
 
 
-def shared_wallpaper() -> Path:
-    """Default path to the plasmalogin-visible wallpaper file."""
-    return shared_wallpapers_dir() / "last_wallpaper.jpg"
+def shared_wallpaper() -> Path | None:
+    """Path to the current plasmalogin-visible wallpaper file, or None.
+
+    Wallpaper filenames are content-addressed
+    (``last_wallpaper-<digest>.jpg``) so every new image is a new file
+    URI — Plasma only repaints when the configured value changes.  This
+    returns the newest matching file in the shared directory, or None
+    when no wallpaper has been applied yet.
+    """
+    candidates: list[Path] = []
+    for path in shared_wallpapers_dir().glob("last_wallpaper*"):
+        try:
+            if path.suffix in (".jpg", ".png") and path.is_file():
+                candidates.append(path)
+        except OSError:
+            continue
+    if not candidates:
+        return None
+    return max(candidates, key=lambda p: p.stat().st_mtime)

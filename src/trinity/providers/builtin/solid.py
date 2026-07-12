@@ -148,3 +148,18 @@ def fetch(options: dict[str, Any]) -> FetchedImage:
         content_type="image/jpeg",
         suggested_extension=".jpg",
     )
+
+
+def probe(options: dict[str, Any]) -> str:
+    """Cheap change probe: a digest of the effective options.
+
+    The generated image depends only on the options, so the token is
+    stable until the config changes — ``apply --if-changed`` then skips
+    regenerating and re-applying an identical image.
+    """
+    import hashlib
+    import json
+
+    opts = {**_DEFAULT_OPTIONS, **options}
+    canonical = json.dumps(opts, sort_keys=True, default=str)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()

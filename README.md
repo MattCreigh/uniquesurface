@@ -27,10 +27,10 @@ Existing wallpaper tools like `variety` or `nitrogen` only handle the desktop. G
 ### ✨ Key features
 
 - **Total cohesion** — one wallpaper applied to desktop and lock screen at once, plus SDDM login when run with root.
-- **Provider registry** — built-in Bing Picture of the Day, local files, and solid colours; built on a [`pluggy`](https://pluggy.readthedocs.io/) hook model (third-party entry-point loading is implemented but not validated with an external package yet).
+- **Provider registry** — built-in Bing Picture of the Day, RSS/Atom image feeds, generic JSON APIs, local files, and solid colours; built on a [`pluggy`](https://pluggy.readthedocs.io/) hook model (third-party entry-point loading is implemented but not validated with an external package yet).
 - **Atomic rollbacks** — every file change is written to an append-only undo log. `trinity restore` replays the inverse operations newest-first.
 - **Safe QML patching** — sentinel-based patching with drift detection. If an upstream KDE update alters a file, `trinity` detects the drift instead of bricking your login screen.
-- **Automated refreshes** — installs a systemd user timer for a daily wallpaper refresh.
+- **Automated refreshes** — installs a systemd user timer that polls hourly with a cheap change probe (`apply --if-changed`) and only downloads + applies when the source actually published a new image.
 - **Strict configuration** — pydantic-validated TOML schema catches typos before they reach your system.
 
 ---
@@ -91,8 +91,8 @@ below only take effect when this is enabled).
 trinity status           # show config + recent manifest entries
 trinity doctor           # verify drift, fonts, config, permissions
 trinity restore          # revert every recorded change
-trinity pause            # temporarily stop the daily timer
-trinity resume           # re-enable the daily timer
+trinity pause            # temporarily stop the refresh timer
+trinity resume           # re-enable the refresh timer
 ```
 
 ---
@@ -103,10 +103,26 @@ List available providers:
 
 ```sh
 trinity provider list
-#   bing    [built-in]   Bing Picture of the Day.
-#   file    [built-in]   Local image file.
-#   solid   [built-in]   Solid colour or gradient.
+#   bing      [built-in]   Bing Picture of the Day.
+#   file      [built-in]   Local image file.
+#   json-api  [built-in]   Generic HTTPS JSON-metadata → image URL recipe.
+#   rss       [built-in]   RSS 2.0 / Atom image feed (enclosure or Media RSS).
+#   solid     [built-in]   Solid colour or gradient.
 ```
+
+The `rss` provider turns any feed that carries images (RSS 2.0
+`enclosure`, Media RSS `media:content`/`media:thumbnail`, Atom
+enclosure links) into a wallpaper source:
+
+```toml
+[surface.source]
+provider = "rss"
+
+[surface.source.options]
+url = "https://feeds.example.com/photo-of-the-day.xml"   # https only
+index = 0                                                # 0 = newest item
+```
+
 
 Get details on one:
 
@@ -154,7 +170,7 @@ Full reference: [`docs/config-reference.md`](docs/config-reference.md).
 
 1. **Fetch** the image from the configured provider.
 2. **Verify** it with Pillow (decode + re-encode, strip metadata).
-3. **Write** the image to `~/.local/state/trinity/last_wallpaper.jpg` and the SDDM-readable `/usr/local/share/wallpapers/last_wallpaper.jpg`.
+3. **Write** the image to `~/.local/state/trinity/last_wallpaper-<digest>.jpg` and the SDDM-readable `/usr/local/share/wallpapers/last_wallpaper-<digest>.jpg`. The filename embeds a digest of the content because Plasma's `org.kde.image` plugin only repaints when the configured `Image=` *value* changes — overwriting a fixed filename would update the bytes on disk without ever refreshing the screen. A stable `last_wallpaper.jpg` symlink tracks the current generation for SDDM (which re-reads the path at greeter start); the previous generation is kept and older ones are pruned.
 4. **Apply** to each surface:
    - **Desktop** — `kwriteconfig6` on the nested `[Containments][<id>][Wallpaper][org.kde.image][General] Image=` groups in `plasma-org.kde.plasma.desktop-appletsrc` + `qdbus6 org.kde.plasmashell /PlasmaShell evaluateScript`.
    - **Lock** — `kwriteconfig6` on `kscreenlockerrc` (`[Greeter][Wallpaper][org.kde.image][General] Image=`).

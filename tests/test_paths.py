@@ -30,7 +30,27 @@ def test_shared_dir_uses_override(
     custom = tmp_path / "custom-share"
     monkeypatch.setenv("TRINITY_SHARED_DIR", str(custom))
     assert paths.shared_wallpapers_dir() == custom
-    assert paths.shared_wallpaper() == custom / "last_wallpaper.jpg"
+
+
+def test_shared_wallpaper_returns_newest_hash_named_file(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Wallpaper files are content-addressed; the helper returns the
+    newest one (or None before the first apply)."""
+    import os
+
+    custom = tmp_path / "custom-share"
+    custom.mkdir()
+    monkeypatch.setenv("TRINITY_SHARED_DIR", str(custom))
+    assert paths.shared_wallpaper() is None
+
+    older = custom / "last_wallpaper-aaaaaaaaaaaa.jpg"
+    newer = custom / "last_wallpaper-bbbbbbbbbbbb.jpg"
+    older.write_bytes(b"old")
+    newer.write_bytes(b"new")
+    os.utime(older, (1_000_000, 1_000_000))
+    os.utime(newer, (2_000_000, 2_000_000))
+    assert paths.shared_wallpaper() == newer
 
 
 def test_shared_dir_default(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -29,6 +29,7 @@ dependencies = [
   "pluggy>=1.5,<2",
   "click>=8.1,<9",
   "packaging>=24,<26",  # PEP 440 / version range parsing for QML descriptors
+  "defusedxml>=0.7,<1",  # hardened XML parsing for the rss provider (XXE/billion-laughs)
 ]
 
 [project.urls]
@@ -134,3 +135,8 @@ select = [
 python_version = "3.12"
 strict = true
 warn_unused_configs = true
+
+[[tool.mypy.overrides]]
+# defusedxml ships no type stubs; its API mirrors xml.etree.ElementTree.
+module = ["defusedxml.*"]
+ignore_missing_imports = true

@@ -156,6 +156,82 @@ def _sanitise_params(params: dict[str, str]) -> dict[str, str]:
     return out
 
 
+def _get_validated(
+    client: httpx.Client,
+    url: str,
+    *,
+    params: dict[str, str] | None = None,
+    headers: dict[str, str] | None = None,
+) -> httpx.Response:
+    """GET ``url``, re-validating scheme + HTTPS + SSRF on every hop.
+
+    Shared by the metadata and image fetchers so the security rules are
+    defined once.  ``params`` are only sent on the initial request;
+    redirect targets already encode the query they want.
+
+    SSRF pre-flight: resolve the hostname and reject private /
+    loopback / link-local / reserved addresses *before* connecting.
+    We do NOT pin the IP into the URL — that would break TLS SNI
+    (the server can't present the right cert for a literal IP, and
+    many CDNs reject the handshake outright with
+    ``TLSV1_ALERT_INTERNAL_ERROR``).  The pre-flight check still
+    defeats the common SSRF vectors (user config pointing at
+    ``127.0.0.1``, ``localhost``, ``169.254.169.254``, ...);
+    DNS-rebinding between the check and the connect is a
+    millisecond window we accept as a trade-off for working TLS.
+    """
+    _check_scheme(url)
+    _require_https(url)
+    _resolve_safely_hook(urlparse(url).hostname or "")
+
+    resp = client.get(url, params=params, headers=headers, follow_redirects=False)
+    # Manual redirect loop so each hop is re-validated.
+    hops = 0
+    while resp.is_redirect and hops < _MAX_REDIRECTS:
+        location = resp.headers.get("location", "")
+        resp.close()
+        if not location:
+            raise ProviderError("redirect with no Location header")
+        next_url = urljoin(url, location)
+        _check_scheme(next_url)
+        _require_https(next_url)
+        _resolve_safely_hook(urlparse(next_url).hostname or "")
+        resp = client.get(next_url, headers=headers, follow_redirects=False)
+        hops += 1
+    if resp.is_redirect:
+        raise ProviderError(f"redirect cap ({_MAX_REDIRECTS}) exceeded for {url}")
+    return resp
+
+
+def fetch_metadata_bytes(
+    url: str,
+    *,
+    params: dict[str, str] | None = None,
+    headers: dict[str, str] | None = None,
+    timeout: float = 30.0,
+) -> bytes:
+    """Fetch a small metadata document (JSON, RSS/Atom XML, ...) from ``url``.
+
+    HTTPS only, SSRF-checked, size-capped at 5 MiB.  Returns the raw
+    body bytes.  Raises ``ProviderError`` on any failure.
+    """
+    clean_params = _sanitise_params(params or {})
+    clean_headers = _sanitise_headers(headers or {})
+
+    with httpx.Client(timeout=timeout) as client:
+        resp = _get_validated(client, url, params=clean_params, headers=clean_headers)
+        if resp.status_code >= 400:
+            raise ProviderError(
+                f"metadata request returned HTTP {resp.status_code}: {url}"
+            )
+        content = resp.content
+        if len(content) > _MAX_METADATA_BYTES:
+            raise ProviderError(
+                f"metadata response exceeds {_MAX_METADATA_BYTES}-byte cap"
+            )
+        return content
+
+
 def fetch_metadata_json(
     url: str,
     *,
@@ -168,62 +244,14 @@ def fetch_metadata_json(
     HTTPS only, SSRF-checked, size-capped at 5 MiB.  Returns the
     parsed JSON.  Raises ``ProviderError`` on any failure.
     """
-    _check_scheme(url)
-    _require_https(url)
+    import json
 
-    clean_params = _sanitise_params(params or {})
-    clean_headers = _sanitise_headers(headers or {})
-
-    # Pre-resolve and pin the IP so the connection itself can't be
-    # redirected to a private address by DNS rebinding mid-flight.
-    # ``_resolve_safely_hook`` is the production resolver; tests can
-    # monkey-patch it to return the hostname unchanged (respx mocks
-    # by hostname).
-    # A failed resolution (or a resolution that lands on a private
-    # address) is raised here as SSRFError, so it fires even before
-    # the first request is made.
-    parsed = urlparse(url)
-    pinned_ip = _resolve_safely_hook(parsed.hostname or "")
-    pinned_url = _pin_host(url, pinned_ip)
-
-    with httpx.Client(timeout=timeout) as client:
-        resp = client.get(
-            pinned_url,
-            params=clean_params,
-            headers=clean_headers,
-            follow_redirects=False,
-        )
-        # Manual redirect loop so each hop is re-validated.
-        hops = 0
-        while resp.is_redirect and hops < _MAX_REDIRECTS:
-            location = resp.headers.get("location", "")
-            resp.close()
-            if not location:
-                raise ProviderError("redirect with no Location header")
-            next_url = urljoin(pinned_url, location)
-            _check_scheme(next_url)
-            _require_https(next_url)
-            next_parsed = urlparse(next_url)
-            next_ip = _resolve_safely_hook(next_parsed.hostname or "")
-            pinned_url = _pin_host(next_url, next_ip)
-            resp = client.get(pinned_url, headers=clean_headers, follow_redirects=False)
-            hops += 1
-        if resp.is_redirect:
-            raise ProviderError(f"redirect cap ({_MAX_REDIRECTS}) exceeded for {url}")
-        if resp.status_code >= 400:
-            raise ProviderError(
-                f"metadata request returned HTTP {resp.status_code}: {url}"
-            )
-        # Cap the response body before parsing.
-        content = resp.content
-        if len(content) > _MAX_METADATA_BYTES:
-            raise ProviderError(
-                f"metadata response exceeds {_MAX_METADATA_BYTES}-byte cap"
-            )
-        try:
-            return resp.json()
-        except ValueError as exc:
-            raise ProviderError(f"metadata response is not valid JSON: {exc}") from exc
+    content = fetch_metadata_bytes(url, params=params, headers=headers, timeout=timeout)
+    try:
+        # json.loads on bytes auto-detects UTF-8/16/32 per RFC 8259.
+        return json.loads(content)
+    except ValueError as exc:
+        raise ProviderError(f"metadata response is not valid JSON: {exc}") from exc
 
 
 def download_image(
@@ -239,32 +267,10 @@ def download_image(
     ``image/jpeg`` if the server doesn't send one.  Raises
     ``ProviderError`` on any failure.
     """
-    _check_scheme(url)
-    _require_https(url)
-
     clean_headers = _sanitise_headers(headers or {})
-    parsed = urlparse(url)
-    pinned_ip = _resolve_safely_hook(parsed.hostname or "")
-    pinned_url = _pin_host(url, pinned_ip)
 
     with httpx.Client(timeout=timeout) as client:
-        resp = client.get(pinned_url, headers=clean_headers, follow_redirects=False)
-        hops = 0
-        while resp.is_redirect and hops < _MAX_REDIRECTS:
-            location = resp.headers.get("location", "")
-            resp.close()
-            if not location:
-                raise ProviderError("redirect with no Location header")
-            next_url = urljoin(pinned_url, location)
-            _check_scheme(next_url)
-            _require_https(next_url)
-            next_parsed = urlparse(next_url)
-            next_ip = _resolve_safely_hook(next_parsed.hostname or "")
-            pinned_url = _pin_host(next_url, next_ip)
-            resp = client.get(pinned_url, headers=clean_headers, follow_redirects=False)
-            hops += 1
-        if resp.is_redirect:
-            raise ProviderError(f"redirect cap ({_MAX_REDIRECTS}) exceeded for {url}")
+        resp = _get_validated(client, url, headers=clean_headers)
         if resp.status_code >= 400:
             raise ProviderError(
                 f"image request returned HTTP {resp.status_code}: {url}"
@@ -291,6 +297,22 @@ def download_image(
             raise ProviderError(f"image exceeds the {max_bytes}-byte download cap")
         content_type = resp.headers.get("content-type", "image/jpeg").split(";")[0]
     return body, content_type
+
+
+def extension_for_content_type(content_type: str) -> str:
+    """Map an image content-type to a filename extension.
+
+    Falls back to ``.img`` for unknown types; the orchestrator's
+    ``verify_image`` step re-encodes and renames anyway, so the fallback
+    only matters for direct provider use.
+    """
+    if "jpeg" in content_type or "jpg" in content_type:
+        return ".jpg"
+    if "png" in content_type:
+        return ".png"
+    if "webp" in content_type:
+        return ".webp"
+    return ".img"
 
 
 def resolve_pointer(doc: Any, pointer: str) -> Any:

@@ -17,13 +17,16 @@ _SYSTEMCTL_TIMEOUT = 10.0
 
 _SERVICE_TEMPLATE = """\
 [Unit]
-Description=trinity — refresh daily POTD wallpaper
+Description=trinity — refresh POTD wallpaper when the source changed
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart={trinity_bin} apply
+# --if-changed: probe the provider with a metadata-sized request and
+# only download + apply when the image actually changed, so the hourly
+# timer is cheap for both us and the provider.
+ExecStart={trinity_bin} apply --if-changed
 WorkingDirectory={home_dir}
 StandardOutput=journal
 StandardError=journal
@@ -50,25 +53,33 @@ RestrictNamespaces=true
 RestrictSUIDSGID=true
 LockPersonality=true
 ProtectKernelTunables=true
-ProtectKernelModules=true
 ProtectControlGroups=true
-ProtectClock=true
 ProtectHostname=true
 UMask=0022
+# NOTE: ProtectClock= and ProtectKernelModules= are deliberately absent.
+# They are implemented by dropping capabilities, which a *user* manager
+# cannot do — on Ubuntu 24.04-based systems (KDE Neon) the unit fails to
+# start with "Failed to drop capabilities: Operation not permitted"
+# before ExecStart even runs. They add nothing for a user service anyway:
+# an unprivileged process never holds CAP_SYS_TIME / CAP_SYS_MODULE.
 """
 
-# Deterministic daily schedule: noon local time, with a small jitter so a
-# fleet of machines doesn't all hit Bing simultaneously. ``Persistent=true``
-# ensures a missed run (e.g. laptop was asleep/offline) catches up on next
-# boot. Noon was chosen to match the historical apply time and avoid midnight
-# network quirks; a missed noon run is caught up the following boot.
+# Hourly conditional schedule. POTD sources publish at provider-specific
+# times (Bing rotates the en-US image in the early morning UTC, feeds
+# publish whenever), so the previous fixed daily run lagged upstream by
+# hours. Each run is ``apply --if-changed``: a metadata-sized probe that
+# skips the download + surface writes when nothing changed, so hourly
+# polling costs a few KiB/hour. ``RandomizedDelaySec`` spreads a fleet of
+# machines so they don't all hit the provider simultaneously;
+# ``Persistent=true`` catches up a run missed while asleep/offline on the
+# next boot, so a new image lands promptly after wake.
 _TIMER_TEMPLATE = """\
 [Unit]
-Description=trinity — daily POTD refresh
+Description=trinity — hourly POTD refresh (skips when unchanged)
 
 [Timer]
-OnCalendar=*-*-* 12:00:00
-RandomizedDelaySec=15min
+OnCalendar=hourly
+RandomizedDelaySec=10min
 Persistent=true
 Unit=trinity-pull.service
 

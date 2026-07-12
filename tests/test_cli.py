@@ -177,13 +177,24 @@ user_dir = "{user_state}"
 
     user_state = tmp_path / "user_state"
     shared = tmp_path / "shared"
-    assert (user_state / "last_wallpaper.jpg").exists()
-    assert (shared / "last_wallpaper.jpg").exists()
+    # Wallpaper filenames are content-addressed (last_wallpaper-<sha12>.jpg)
+    # so every new image is a new file URI and Plasma repaints.
+    user_wallpapers = list(user_state.glob("last_wallpaper-*.jpg"))
+    shared_wallpapers = list(shared.glob("last_wallpaper-*.jpg"))
+    assert len(user_wallpapers) == 1
+    assert len(shared_wallpapers) == 1
+    assert user_wallpapers[0].name == shared_wallpapers[0].name
+    # A stable alias points at the current generation for consumers that
+    # resolve the path at read time (SDDM).
+    alias = shared / "last_wallpaper.jpg"
+    assert alias.is_symlink()
+    assert alias.resolve() == shared_wallpapers[0]
     # Phase 5: SDDM wallpaper now goes to theme.conf.user (the
-    # sanctioned SDDM override), not the vendor theme.conf.
-    assert "last_wallpaper.jpg" in fake_sddm_user.read_text()
+    # sanctioned SDDM override), not the vendor theme.conf — and it
+    # references the stable alias, not the hash-named file.
+    assert str(alias) in fake_sddm_user.read_text()
     # The vendor theme.conf is untouched.
-    assert "last_wallpaper.jpg" not in fake_sddm.read_text()
+    assert "last_wallpaper" not in fake_sddm.read_text()
 
     # The manifest has entries (wallpapers, theme.conf, and QML screens)
     from trinity.manifest import Manifest
@@ -193,8 +204,8 @@ user_dir = "{user_state}"
     assert len(entries) > 0
     # At least wallpaper writes, login config write, and QML write should be tracked.
     paths_tracked = [e.path for e in entries]
-    assert any(str(user_state / "last_wallpaper.jpg") in p for p in paths_tracked)
-    assert any(str(shared / "last_wallpaper.jpg") in p for p in paths_tracked)
+    assert any(str(user_wallpapers[0]) in p for p in paths_tracked)
+    assert any(str(shared_wallpapers[0]) in p for p in paths_tracked)
     assert any(str(fake_sddm) in p for p in paths_tracked)
     assert any(str(fake_login_qml) in p for p in paths_tracked)
 
@@ -573,6 +584,9 @@ def test_apply_skips_qml_patching_when_theme_tokens_disabled(
         'resolution = "1920x1080"\n'
         "[surface.theme_tokens]\n"
         "enabled = false\n"
+        "[surface.behaviour]\n"
+        f'shared_dir = "{tmp_path / "shared"}"\n'
+        f'user_dir = "{tmp_path / "user"}"\n'
     )
 
     # Patch the fetch + verify + backends to avoid real I/O.
@@ -587,7 +601,7 @@ def test_apply_skips_qml_patching_when_theme_tokens_disabled(
     fake_png = buf.getvalue()
     monkeypatch.setattr(
         "trinity.orchestrator.fetch_wallpaper",
-        lambda c: FetchedImage(
+        lambda c, pm=None: FetchedImage(
             data=fake_png,
             content_type="image/png",
             suggested_extension=".png",
@@ -595,9 +609,12 @@ def test_apply_skips_qml_patching_when_theme_tokens_disabled(
     )
     from trinity.backends.desktop import DesktopBackend
     from trinity.backends.lock import LockBackend
+    from trinity.backends.login import LoginBackend
 
     monkeypatch.setattr(DesktopBackend, "apply", lambda self, m, w: None)
     monkeypatch.setattr(LockBackend, "apply", lambda self, m, w: None)
+    # Never touch the real SDDM theme.conf.user from a test.
+    monkeypatch.setattr(LoginBackend, "apply", lambda self, m, w: None)
 
     runner = CliRunner()
     result = runner.invoke(main, ["apply"])
@@ -631,6 +648,9 @@ def test_apply_warns_when_theme_tokens_disabled_with_custom_values(
         "enabled = false\n"
         "[surface.fonts]\n"
         'family = "DejaVu Sans"  # non-default, should trigger warning\n'
+        "[surface.behaviour]\n"
+        f'shared_dir = "{tmp_path / "shared"}"\n'
+        f'user_dir = "{tmp_path / "user"}"\n'
     )
 
     import io
@@ -645,14 +665,18 @@ def test_apply_warns_when_theme_tokens_disabled_with_custom_values(
     Image.new("RGB", (8, 8), (0, 128, 255)).save(buf, format="PNG")
     monkeypatch.setattr(
         "trinity.orchestrator.fetch_wallpaper",
-        lambda c: FetchedImage(
+        lambda c, pm=None: FetchedImage(
             data=buf.getvalue(),
             content_type="image/png",
             suggested_extension=".png",
         ),
     )
+    from trinity.backends.login import LoginBackend
+
     monkeypatch.setattr(DesktopBackend, "apply", lambda self, m, w: None)
     monkeypatch.setattr(LockBackend, "apply", lambda self, m, w: None)
+    # Never touch the real SDDM theme.conf.user from a test.
+    monkeypatch.setattr(LoginBackend, "apply", lambda self, m, w: None)
 
     runner = CliRunner()
     result = runner.invoke(main, ["apply"])

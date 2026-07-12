@@ -89,7 +89,9 @@ def test_apply_continues_when_backend_fails(
         )
 
     monkeypatch.setattr("trinity.orchestrator.fetch_from_source", fake_fetch)
-    monkeypatch.setattr("trinity.orchestrator.fetch_wallpaper", lambda c: fake_fetch())
+    monkeypatch.setattr(
+        "trinity.orchestrator.fetch_wallpaper", lambda c, pm=None: fake_fetch()
+    )
 
     # Stub desktop + lock backends to succeed; login to fail.
     from trinity.backends.desktop import DesktopBackend

@@ -44,6 +44,12 @@ _FOOTER = f"\n{SENTINEL_END}\n"
 # false-positive drift after every apply.
 HEADER_LINE = "// managed by trinity — do not edit"
 
+# Marker comment that the wake-keypress guard writes into MainBlock.qml.
+# Declared at module top so the fallback regex (which uses it via
+# ``re.escape``) can be called at import time by the descriptor
+# resolver, before the original definition site further down.
+WAKE_GUARD_MARKER = "// @trinity:suppress_wake_keypress"
+
 
 # --- Plasma-version-aware descriptor resolution -------------------------
 #
@@ -389,7 +395,9 @@ def remove_sentinels(*, name: str, vendor_path: Path, manifest: Manifest) -> str
 # user-switch branch) so unrelated ``Keys.onPressed`` handlers are
 # never touched. ``lockScreenRoot`` resolves via the QML context chain
 # from the instantiating LockScreenUi.qml document.
-WAKE_GUARD_MARKER = "// @trinity:suppress_wake_keypress"
+# ``WAKE_GUARD_MARKER`` is declared at module top (above the
+# descriptor-resolver block) so the fallback regex can reference it
+# at import time.
 
 
 def _wake_guard_block(indent: str) -> str:

@@ -35,10 +35,19 @@ def test_render_service_contains_trinity_bin() -> None:
     assert "RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX" in text
 
 
-def test_render_timer_has_daily_schedule() -> None:
+def test_render_timer_has_hourly_conditional_schedule() -> None:
     text = systemd.render_timer()
-    assert "OnCalendar=*-*-* 12:00:00" in text
+    assert "OnCalendar=hourly" in text
+    assert "RandomizedDelaySec=10min" in text
     assert "Persistent=true" in text
+
+
+def test_render_service_uses_if_changed() -> None:
+    """Hourly timer runs must be cheap: the service passes --if-changed so
+    an unchanged source costs one metadata-sized request, not a download
+    plus surface rewrites."""
+    text = systemd.render_service({"trinity_bin": "/bin/x", "home_dir": "/home/x"})
+    assert "ExecStart=/bin/x apply --if-changed" in text
 
 
 def test_install_writes_units(tmp_path: Path) -> None:
@@ -49,7 +58,7 @@ def test_install_writes_units(tmp_path: Path) -> None:
     assert svc.exists()
     assert tmr.exists()
     assert "/bin/true" in svc.read_text()
-    assert "OnCalendar=*-*-* 12:00:00" in tmr.read_text()
+    assert "OnCalendar=hourly" in tmr.read_text()
 
 
 def test_install_raises_when_binary_missing(tmp_path: Path, monkeypatch) -> None:
@@ -94,6 +103,22 @@ def test_render_service_includes_extended_hardening() -> None:
         "UMask=0022",
     ):
         assert directive in text, directive
+
+
+def test_render_service_omits_capability_dropping_directives() -> None:
+    """ProtectClock=/ProtectKernelModules= are implemented by dropping
+    capabilities, which a user manager cannot do — the unit then fails
+    with 'Failed to drop capabilities' before ExecStart runs (seen on
+    KDE Neon / Ubuntu 24.04). They must never reappear in the template.
+
+    Line-anchored so the template comment explaining the omission
+    doesn't count as a directive.
+    """
+    import re
+
+    text = systemd.render_service({"trinity_bin": "/bin/x", "home_dir": "/home/x"})
+    assert not re.search(r"^ProtectClock=", text, re.MULTILINE)
+    assert not re.search(r"^ProtectKernelModules=", text, re.MULTILINE)
 
 
 def test_pause_uses_runtime_mask() -> None:

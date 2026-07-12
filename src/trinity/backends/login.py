@@ -60,7 +60,12 @@ class LoginBackend:
         return plan
 
     def _write_conf(self, manifest: Manifest, wallpaper: Path) -> None:
-        target = wallpaper.resolve()
+        # Absolute path, but WITHOUT resolving symlinks: the orchestrator
+        # passes the stable `last_wallpaper.jpg` alias on purpose — SDDM
+        # re-reads the file at greeter start, and the alias tracks the
+        # current image without theme.conf.user (usually root-owned)
+        # needing a rewrite. Resolving would pin the hash-named target.
+        target = wallpaper.absolute()
         # Phase 5: write theme.conf.user (the sanctioned SDDM override
         # mechanism) rather than editing the vendor theme.conf.  SDDM
         # merges .user over the base config, so this is reversible by

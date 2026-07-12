@@ -21,11 +21,11 @@ from trinity.schema import Source, SourceOptions
 # --- registry ---------------------------------------------------------
 
 
-def test_registry_registers_three_builtins() -> None:
+def test_registry_registers_builtins() -> None:
     pm = make_plugin_manager()
     infos = list_providers(pm)
     names = {i.name for i in infos}
-    assert names == {"bing", "file", "json-api", "solid"}
+    assert names == {"bing", "file", "json-api", "rss", "solid"}
 
 
 def test_third_party_entry_point_plugin_is_loaded(
@@ -102,7 +102,7 @@ def test_broken_entry_point_is_skipped(monkeypatch: pytest.MonkeyPatch) -> None:
     pm = make_plugin_manager()
     names = {i.name for i in list_providers(pm)}
     assert "broken-plugin" not in names
-    assert {"bing", "file", "json-api", "solid"} == names
+    assert {"bing", "file", "json-api", "rss", "solid"} == names
 
 
 def test_get_provider_returns_matching_plugin() -> None:
@@ -925,3 +925,321 @@ def test_resolve_pointer_property() -> None:
         assert result == pairs[idx][1]
 
     _inner()
+
+
+# --- rss ---------------------------------------------------------------
+
+_FEED_URL = "https://feeds.example.com/potd.xml"
+
+
+def _rss2_feed(items: str) -> bytes:
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<rss version="2.0" xmlns:media="http://search.yahoo.com/mrss/">'
+        f"<channel><title>POTD</title>{items}</channel></rss>"
+    ).encode()
+
+
+def test_rss_fetches_enclosure_image(respx_mock: respx.router.MockRouter) -> None:
+    from trinity.providers.builtin import rss
+
+    image_bytes = b"\xff\xd8\xff" + b"feed-image"
+    feed = _rss2_feed(
+        "<item><title>Day 1</title>"
+        '<enclosure url="https://img.example.com/day1.jpg" type="image/jpeg"/>'
+        "</item>"
+    )
+    respx_mock.get(_FEED_URL).mock(return_value=httpx.Response(200, content=feed))
+    respx_mock.get("https://img.example.com/day1.jpg").mock(
+        return_value=httpx.Response(
+            200, content=image_bytes, headers={"content-type": "image/jpeg"}
+        )
+    )
+
+    img = rss.fetch({"url": _FEED_URL})
+    assert img.data == image_bytes
+    assert img.content_type == "image/jpeg"
+    assert img.suggested_extension == ".jpg"
+
+
+def test_rss_index_selects_nth_item(respx_mock: respx.router.MockRouter) -> None:
+    from trinity.providers.builtin import rss
+
+    feed = _rss2_feed(
+        '<item><enclosure url="https://img.example.com/new.jpg" '
+        'type="image/jpeg"/></item>'
+        '<item><enclosure url="https://img.example.com/old.jpg" '
+        'type="image/jpeg"/></item>'
+    )
+    respx_mock.get(_FEED_URL).mock(return_value=httpx.Response(200, content=feed))
+    old_route = respx_mock.get("https://img.example.com/old.jpg").mock(
+        return_value=httpx.Response(
+            200, content=b"\xff\xd8\xffold", headers={"content-type": "image/jpeg"}
+        )
+    )
+
+    rss.fetch({"url": _FEED_URL, "index": 1})
+    assert old_route.called
+
+
+def test_rss_media_content_and_group(respx_mock: respx.router.MockRouter) -> None:
+    """Media RSS <media:content> is honoured, both directly on the item
+    and nested inside <media:group>."""
+    from trinity.providers.builtin import rss
+
+    feed = _rss2_feed(
+        "<item><media:group>"
+        '<media:content url="https://img.example.com/grouped.png" medium="image"/>'
+        "</media:group></item>"
+    )
+    respx_mock.get(_FEED_URL).mock(return_value=httpx.Response(200, content=feed))
+    route = respx_mock.get("https://img.example.com/grouped.png").mock(
+        return_value=httpx.Response(
+            200, content=b"\x89PNGdata", headers={"content-type": "image/png"}
+        )
+    )
+
+    img = rss.fetch({"url": _FEED_URL})
+    assert route.called
+    assert img.suggested_extension == ".png"
+
+
+def test_rss_atom_feed_link_enclosure(respx_mock: respx.router.MockRouter) -> None:
+    from trinity.providers.builtin import rss
+
+    feed = (
+        b'<?xml version="1.0"?>\n'
+        b'<feed xmlns="http://www.w3.org/2005/Atom"><title>POTD</title>'
+        b"<entry><title>Day 1</title>"
+        b'<link rel="enclosure" type="image/jpeg" '
+        b'href="https://img.example.com/atom.jpg"/>'
+        b"</entry></feed>"
+    )
+    respx_mock.get(_FEED_URL).mock(return_value=httpx.Response(200, content=feed))
+    route = respx_mock.get("https://img.example.com/atom.jpg").mock(
+        return_value=httpx.Response(
+            200, content=b"\xff\xd8\xffatom", headers={"content-type": "image/jpeg"}
+        )
+    )
+
+    rss.fetch({"url": _FEED_URL})
+    assert route.called
+
+
+def test_rss_relative_enclosure_resolved_against_feed_url(
+    respx_mock: respx.router.MockRouter,
+) -> None:
+    from trinity.providers.builtin import rss
+
+    feed = _rss2_feed(
+        '<item><enclosure url="/images/rel.jpg" type="image/jpeg"/></item>'
+    )
+    respx_mock.get(_FEED_URL).mock(return_value=httpx.Response(200, content=feed))
+    route = respx_mock.get("https://feeds.example.com/images/rel.jpg").mock(
+        return_value=httpx.Response(
+            200, content=b"\xff\xd8\xffrel", headers={"content-type": "image/jpeg"}
+        )
+    )
+
+    rss.fetch({"url": _FEED_URL})
+    assert route.called
+
+
+def test_rss_item_without_image_raises(respx_mock: respx.router.MockRouter) -> None:
+    """An item with only a non-image enclosure (podcast audio) is refused."""
+    from trinity.providers.builtin import rss
+
+    feed = _rss2_feed(
+        '<item><enclosure url="https://cdn.example.com/ep1.mp3" type="audio/mpeg"/>'
+        "<link>https://example.com/episode-1</link></item>"
+    )
+    respx_mock.get(_FEED_URL).mock(return_value=httpx.Response(200, content=feed))
+    with pytest.raises(ProviderError, match="declares no image"):
+        rss.fetch({"url": _FEED_URL})
+
+
+def test_rss_index_out_of_range_raises(respx_mock: respx.router.MockRouter) -> None:
+    from trinity.providers.builtin import rss
+
+    feed = _rss2_feed(
+        '<item><enclosure url="https://img.example.com/one.jpg" '
+        'type="image/jpeg"/></item>'
+    )
+    respx_mock.get(_FEED_URL).mock(return_value=httpx.Response(200, content=feed))
+    with pytest.raises(ProviderError, match="out of range"):
+        rss.fetch({"url": _FEED_URL, "index": 5})
+
+
+def test_rss_malformed_xml_raises(respx_mock: respx.router.MockRouter) -> None:
+    from trinity.providers.builtin import rss
+
+    respx_mock.get(_FEED_URL).mock(
+        return_value=httpx.Response(200, content=b"<rss><channel>broken")
+    )
+    with pytest.raises(ProviderError, match="XML"):
+        rss.fetch({"url": _FEED_URL})
+
+
+def test_rss_entity_expansion_rejected(respx_mock: respx.router.MockRouter) -> None:
+    """A billion-laughs style DOCTYPE must be rejected by defusedxml, not
+    expanded in memory."""
+    from trinity.providers.builtin import rss
+
+    bomb = (
+        b'<?xml version="1.0"?>\n'
+        b'<!DOCTYPE lolz [<!ENTITY lol "lol">'
+        b'<!ENTITY lol2 "&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;">]>'
+        b"<rss><channel><item><title>&lol2;</title></item></channel></rss>"
+    )
+    respx_mock.get(_FEED_URL).mock(return_value=httpx.Response(200, content=bomb))
+    with pytest.raises(ProviderError, match="XML"):
+        rss.fetch({"url": _FEED_URL})
+
+
+def test_rss_rejects_plain_http_url() -> None:
+    from pydantic import ValidationError
+
+    from trinity.providers.builtin import rss
+
+    with pytest.raises(ValidationError, match="https"):
+        rss.RssOptions.model_validate({"url": "http://feeds.example.com/potd.xml"})
+
+
+def test_rss_unsupported_root_raises(respx_mock: respx.router.MockRouter) -> None:
+    from trinity.providers.builtin import rss
+
+    respx_mock.get(_FEED_URL).mock(
+        return_value=httpx.Response(
+            200, content=b"<html><body>not a feed</body></html>"
+        )
+    )
+    with pytest.raises(ProviderError, match="unsupported feed root"):
+        rss.fetch({"url": _FEED_URL})
+
+
+# --- change probes (apply --if-changed) ---------------------------------
+
+
+def test_rss_probe_is_metadata_only(respx_mock: respx.router.MockRouter) -> None:
+    """The probe fetches the feed but never the image; the token is the
+    resolved image URL, so it changes exactly when the feed advances."""
+    from trinity.providers.builtin import rss
+
+    feed = _rss2_feed(
+        '<item><enclosure url="https://img.example.com/day1.jpg" '
+        'type="image/jpeg"/></item>'
+    )
+    respx_mock.get(_FEED_URL).mock(return_value=httpx.Response(200, content=feed))
+    image_route = respx_mock.get("https://img.example.com/day1.jpg").mock(
+        return_value=httpx.Response(200, content=b"\xff\xd8\xff")
+    )
+
+    token = rss.probe({"url": _FEED_URL})
+    assert token == "https://img.example.com/day1.jpg"
+    assert not image_route.called
+
+
+def test_bing_probe_is_metadata_only(respx_mock: respx.router.MockRouter) -> None:
+    metadata_route = respx_mock.get(bing._METADATA_URL).mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "images": [
+                    {
+                        "url": "/th?id=OHR.Foo_1920x1080.jpg&pid=hp",
+                        "urlbase": "/th?id=OHR.Foo",
+                        "hsh": "abc123",
+                    }
+                ]
+            },
+        )
+    )
+    image_route = respx_mock.get(
+        "https://www.bing.com/th?id=OHR.Foo_1920x1080.jpg&pid=hp"
+    ).mock(return_value=httpx.Response(200, content=b"\xff\xd8\xff"))
+
+    token = bing.probe({"mkt": "en-US"})
+    assert metadata_route.called
+    assert not image_route.called
+    # hsh preferred; market folded in (same day differs per market).
+    assert token == "en-US:abc123"
+
+
+def test_bing_probe_falls_back_to_urlbase(
+    respx_mock: respx.router.MockRouter,
+) -> None:
+    respx_mock.get(bing._METADATA_URL).mock(
+        return_value=httpx.Response(
+            200, json={"images": [{"url": "/th?id=x.jpg", "urlbase": "/th?id=x"}]}
+        )
+    )
+    assert bing.probe({}) == "en-US:/th?id=x"
+
+
+def test_solid_probe_stable_until_options_change() -> None:
+    assert solid.probe({"color": "#123456"}) == solid.probe({"color": "#123456"})
+    assert solid.probe({"color": "#123456"}) != solid.probe({"color": "#654321"})
+
+
+def test_file_probe_changes_when_file_replaced(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import os
+
+    monkeypatch.setenv("TRINITY_SHARED_DIR", str(tmp_path))
+    target = tmp_path / "wp.jpg"
+    target.write_bytes(b"\xff\xd8\xffv1")
+    os.utime(target, (1_000_000, 1_000_000))
+    first = file.probe({"path": str(target)})
+    assert first == file.probe({"path": str(target)})
+
+    target.write_bytes(b"\xff\xd8\xffv2-longer")
+    os.utime(target, (2_000_000, 2_000_000))
+    assert file.probe({"path": str(target)}) != first
+
+
+def test_file_probe_enforces_allow_list(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The probe must not be usable to stat arbitrary paths outside the
+    allow-listed roots."""
+    monkeypatch.setenv("TRINITY_SHARED_DIR", str(tmp_path / "elsewhere"))
+    outside = tmp_path / "secret.jpg"
+    outside.write_bytes(b"\xff\xd8\xff")
+    with pytest.raises(ProviderError, match="not under an allowed root"):
+        file.probe({"path": str(outside)})
+
+
+def test_probe_from_source_dispatches() -> None:
+    from trinity.providers import probe_from_source
+
+    pm = make_plugin_manager()
+    source = Source(
+        provider="solid",
+        options=SourceOptions.model_validate({"color": "#abcdef"}),
+    )
+    token = probe_from_source(pm, source)
+    assert isinstance(token, str) and token
+
+
+def test_probe_from_source_none_for_probeless_plugin() -> None:
+    """A provider without a probe hook yields None (callers fall back to
+    a full fetch)."""
+    from trinity.providers import (
+        FetchedImage,
+        ProviderInfo,
+        _BuiltinPlugin,
+        probe_from_source,
+    )
+
+    pm = make_plugin_manager()
+    plugin = _BuiltinPlugin(
+        "no-probe",
+        ProviderInfo(name="no-probe", description="x", builtin=False),
+        lambda options: FetchedImage(
+            data=b"\xff\xd8\xff", content_type="image/jpeg", suggested_extension=".jpg"
+        ),
+    )
+    pm.register(plugin, name="no-probe")
+    source = Source(provider="no-probe", options=SourceOptions())
+    assert probe_from_source(pm, source) is None

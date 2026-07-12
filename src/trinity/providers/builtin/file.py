@@ -110,7 +110,14 @@ def _is_under(path: Path, roots: tuple[Path, ...]) -> bool:
     return False
 
 
-def fetch(options: dict[str, Any]) -> FetchedImage:
+def _validated_path(options: dict[str, Any]) -> Path:
+    """Expand and allow-list-check the ``path`` option.
+
+    Shared by :func:`fetch` and :func:`probe` so the probe cannot be
+    used to sidestep the allow-list.  Raises :class:`ProviderError` for
+    a missing option, a path outside the allowed roots, or a
+    non-existent file.
+    """
     opts = {**_DEFAULT_OPTIONS, **options}
     raw = opts.get("path")
     if not isinstance(raw, str) or not raw:
@@ -133,6 +140,11 @@ def fetch(options: dict[str, Any]) -> FetchedImage:
 
     if not path.is_file():
         raise ProviderError(f"file provider: file not found: {path}")
+    return path
+
+
+def fetch(options: dict[str, Any]) -> FetchedImage:
+    path = _validated_path(options)
 
     size = path.stat().st_size
     if size > _MAX_LOCAL_BYTES:
@@ -156,3 +168,17 @@ def fetch(options: dict[str, Any]) -> FetchedImage:
         content_type = "application/octet-stream"
         ext = suffix or ".bin"
     return FetchedImage(data=data, content_type=content_type, suggested_extension=ext)
+
+
+def probe(options: dict[str, Any]) -> str:
+    """Cheap change probe: a ``stat``-based token, no file read.
+
+    ``st_mtime_ns`` + ``st_size`` change whenever the file is replaced
+    or rewritten, which is how local wallpaper files get updated.
+    """
+    path = _validated_path(options)
+    try:
+        st = path.stat()
+    except OSError as exc:
+        raise ProviderError(f"file provider: cannot stat {path}: {exc}") from exc
+    return f"{path.resolve(strict=False)}:{st.st_mtime_ns}:{st.st_size}"

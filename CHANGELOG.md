@@ -6,6 +6,69 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-07-12
+
+### Fixed
+
+- **Desktop wallpaper now repaints when the image changes.** Wallpaper
+  files are content-addressed (`last_wallpaper-<digest>.jpg`) instead
+  of a fixed filename. Plasma's `org.kde.image` plugin doesn't watch
+  file contents and KConfig only emits a change signal when the
+  `Image=` *value* changes, so overwriting `last_wallpaper.jpg` in
+  place updated the bytes on disk but never refreshed the running
+  shell — the new picture only appeared after a plasmashell restart.
+  Each apply keeps the previous generation and prunes older ones, and
+  maintains a stable `last_wallpaper.jpg` symlink pointing at the
+  current generation: SDDM re-reads the image at every greeter start,
+  so its theme.conf.user references the fixed alias and stays current
+  without needing a rewrite (it is usually root-owned, which the
+  user-mode timer cannot touch).
+- **The systemd user service failed to start on KDE Neon / Ubuntu
+  24.04** with "Failed to drop capabilities: Operation not permitted".
+  `ProtectClock=` and `ProtectKernelModules=` are implemented by
+  dropping capabilities, which a *user* manager cannot do; both are
+  removed from the unit template (they add nothing for an unprivileged
+  service — it never holds CAP_SYS_TIME / CAP_SYS_MODULE).
+- Two CLI tests ran `apply` with the default
+  `/usr/local/share/wallpapers` shared dir and an unstubbed login
+  backend, writing real system files on machines where those paths are
+  user-writable. Both are hermetic now.
+
+### Added
+
+- **`rss` provider** — turns any RSS 2.0 / Atom feed that carries
+  images (RSS `enclosure`, Media RSS `media:content` /
+  `media:thumbnail`, Atom enclosure links, or a direct image `<link>`)
+  into a wallpaper source. Shares the SSRF-hardened HTTP layer
+  (HTTPS-only, private-address rejection, redirect/size caps) and
+  parses feeds with `defusedxml` (rejects XXE, billion-laughs entity
+  expansion, and DTD retrieval). New dependency: `defusedxml`.
+- **`trinity apply --if-changed`** — asks the provider for a cheap
+  change token (new `trinity_provider_probe` pluggy hook: Bing uses
+  the metadata document's image hash, `rss`/`json-api` the resolved
+  image URL, `file` a stat token, `solid` an options digest) and skips
+  the download and all surface writes when nothing changed. State is
+  persisted in `<user_dir>/refresh_state.json`; a missing/corrupt
+  state or a probe failure degrades to a full apply (fail open).
+  Providers without a probe fall back to a full fetch plus an
+  image-digest comparison.
+- **`trinity apply --restart-dm`** — opt-in flag that restarts the
+  detected display manager after the login wallpaper was applied, so
+  the new SDDM background is visible immediately. Terminates the
+  running Wayland session, so it is never automatic: it requires the
+  explicit flag plus root (or a sudo/pkexec escalation path), and
+  falls back to the usual restart hint otherwise.
+
+### Changed
+
+- **The refresh timer polls hourly instead of daily at noon.** POTD
+  sources publish at provider-specific times (Bing rotates the en-US
+  image in the early morning UTC), so the fixed noon run lagged
+  upstream by hours — and a reboot before noon showed yesterday's
+  image on SDDM. The service now runs `apply --if-changed`, making
+  the hourly poll a metadata-sized request when nothing changed.
+  Re-run `trinity install` to regenerate the units.
+
 ### Changed (Phase 5 — sanctioned SDDM override mechanisms)
 
 - **SDDM wallpaper backend no longer edits the vendor `theme.conf`**.

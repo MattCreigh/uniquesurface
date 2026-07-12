@@ -45,6 +45,7 @@ The provider plugin to fetch a wallpaper from. Built-in values:
 | `file`    | A local image file (path in `options`).                           |
 | `solid`   | Solid colour or 2-stop gradient.                                  |
 | `json-api`| Generic metadata-then-image recipe (HTTPS, JSON Pointer).         |
+| `rss`     | RSS 2.0 / Atom image feed (enclosure, Media RSS, Atom links).     |
 
 `options` is validated against the provider's pydantic schema at
 config-load time. Each built-in provider declares a strict schema
@@ -116,6 +117,38 @@ provider = "json-api"
 metadata_url     = "https://api.nasa.gov/planetary/apod"
 image_url_pointer = "/url"
 params           = { api_key = "DEMO_KEY", thumbs = "false" }
+```
+
+### `rss` options
+
+Turns any RSS 2.0 or Atom feed that carries images into a wallpaper
+source. Per item, the image URL is resolved in this precedence order:
+RSS `enclosure` (image type), Media RSS `media:content` (image
+`medium`/`type`, directly or inside `media:group`), Media RSS
+`media:thumbnail`, Atom `link rel="enclosure"` (image type), and
+finally the item `<link>` when its path ends in an image extension.
+
+| Key       | Type   | Default | Notes                                              |
+|-----------|--------|---------|-----------------------------------------------------|
+| `url`     | string | —       | Required. HTTPS-only feed URL.                      |
+| `index`   | int    | `0`     | Item offset (0 = first item; feeds are newest-first). |
+| `headers` | table  | `{}`    | Optional HTTP headers for both requests.            |
+| `timeout` | float  | `30.0`  | Per-request timeout (0 < t ≤ 300).                  |
+
+The HTTP guardrails from `bing`/`json-api` apply (HTTPS-only, SSRF
+rejection, redirect cap, 5 MiB feed cap, 50 MiB image cap). The XML
+document is parsed with `defusedxml`, which rejects entity expansion
+(billion laughs), external entities (XXE), and DTD retrieval outright.
+Relative image URLs are resolved against the feed URL.
+
+**Example — NASA Image of the Day:**
+
+```toml
+[surface.source]
+provider = "rss"
+
+[surface.source.options]
+url = "https://www.nasa.gov/feeds/iotd-feed/"
 ```
 
 ### `file` options
@@ -195,7 +228,7 @@ Tokens applied to the Plasma lock screen (`LockScreenUi.qml`).
 File layout.
 
 - `shared_dir`: directory visible to the SDDM user. Created by
-  `trinity install` with root; the daily POTD is copied here.
+  `trinity install` with root; the refreshed POTD is copied here.
 - `user_dir`: per-user canonical copy directory. The latest wallpaper
   is always written here first; the shared copy follows.
 

@@ -119,7 +119,34 @@ def _install_excepthook() -> None:
         "Adopt drifted vendor QML as the new pristine baseline (after a Plasma update)."
     ),
 )
-def apply(dry_run: bool, config_path: Path | None, adopt_drift: bool) -> None:
+@click.option(
+    "--restart-dm",
+    is_flag=True,
+    help=(
+        "After applying the SDDM login wallpaper, restart the display "
+        "manager so the new wallpaper takes effect immediately. "
+        "TERMINATES your current Wayland session — opt-in only. "
+        "Requires root (or a sudoers rule that allows the restart)."
+    ),
+)
+@click.option(
+    "--if-changed",
+    "if_changed",
+    is_flag=True,
+    help=(
+        "Skip the apply when the wallpaper is unchanged: ask the provider "
+        "for a cheap change token (metadata-only request) and compare it "
+        "with the state persisted by the last apply. Used by the hourly "
+        "systemd timer."
+    ),
+)
+def apply(
+    dry_run: bool,
+    config_path: Path | None,
+    adopt_drift: bool,
+    restart_dm: bool,
+    if_changed: bool,
+) -> None:
     """Apply the configured wallpaper to desktop, lock, and login."""
     from trinity import paths
     from trinity.config import load_config
@@ -166,19 +193,31 @@ def apply(dry_run: bool, config_path: Path | None, adopt_drift: bool) -> None:
 
     manifest = Manifest()
     plan = apply_to_surfaces(
-        cfg, manifest=manifest, dry_run=dry_run, adopt_drift=adopt_drift
+        cfg,
+        manifest=manifest,
+        dry_run=dry_run,
+        adopt_drift=adopt_drift,
+        restart_dm=restart_dm,
+        if_changed=if_changed,
     )
     for line in plan:
         click.echo(line)
     # The orchestrator already emits a precise "restart <dm>" or
     # "log out fully" hint when the login surface was actually updated,
     # so we only add a generic note when nothing login-related was said.
-    if not dry_run and not any("login wallpaper updated" in line for line in plan):
-        if not any("login" in line.lower() for line in plan):
-            click.echo(
-                "To see the new wallpaper on the SDDM login screen, "
-                "log out fully (not switch-user)."
-            )
+    # An --if-changed run that skipped the apply ("unchanged") wrote
+    # nothing, so the note would be noise in the hourly timer's journal.
+    applied_something = any(line.startswith("wrote ") for line in plan)
+    if (
+        not dry_run
+        and applied_something
+        and not any("login wallpaper updated" in line for line in plan)
+        and not any("login" in line.lower() for line in plan)
+    ):
+        click.echo(
+            "To see the new wallpaper on the SDDM login screen, "
+            "log out fully (not switch-user)."
+        )
 
 
 # --- restore -----------------------------------------------------------

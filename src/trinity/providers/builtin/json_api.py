@@ -90,10 +90,14 @@ class JsonApiOptions(BaseModel):
         return v
 
 
-def fetch(options: dict[str, Any]) -> FetchedImage:
-    """Fetch a wallpaper via the generic JSON metadata → image URL recipe."""
-    # Validate once at the entry point so config errors surface here
-    # (not deep in the SSRF/HTTP layer).
+def _resolve_image_url(options: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """Fetch the metadata document and return the absolute image URL.
+
+    Shared by :func:`fetch` and :func:`probe` so both apply identical
+    validation and pointer-resolution rules.  Validates once at the
+    entry point so config errors surface here (not deep in the
+    SSRF/HTTP layer).
+    """
     opts = JsonApiOptions.model_validate(options).model_dump()
 
     meta = _http.fetch_metadata_json(
@@ -110,19 +114,30 @@ def fetch(options: dict[str, Any]) -> FetchedImage:
         )
 
     # Resolve relative URLs against the metadata URL.
-    image_url = urljoin(str(opts["metadata_url"]), raw_url)
+    return urljoin(str(opts["metadata_url"]), raw_url), opts
+
+
+def fetch(options: dict[str, Any]) -> FetchedImage:
+    """Fetch a wallpaper via the generic JSON metadata → image URL recipe."""
+    image_url, opts = _resolve_image_url(options)
 
     data, content_type = _http.download_image(
         image_url,
         headers=opts.get("headers", {}),
         timeout=float(opts["timeout"]),
     )
-    if "jpeg" in content_type or "jpg" in content_type:
-        ext = ".jpg"
-    elif "png" in content_type:
-        ext = ".png"
-    elif "webp" in content_type:
-        ext = ".webp"
-    else:
-        ext = ".img"
-    return FetchedImage(data=data, content_type=content_type, suggested_extension=ext)
+    return FetchedImage(
+        data=data,
+        content_type=content_type,
+        suggested_extension=_http.extension_for_content_type(content_type),
+    )
+
+
+def probe(options: dict[str, Any]) -> str:
+    """Cheap change probe: fetch only the metadata document.
+
+    The token is the resolved absolute image URL — POTD APIs publish a
+    new URL per image, so a stable token means an unchanged wallpaper.
+    """
+    image_url, _opts = _resolve_image_url(options)
+    return image_url

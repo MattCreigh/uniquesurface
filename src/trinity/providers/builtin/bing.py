@@ -67,6 +67,51 @@ class BingOptions(BaseModel):
     )
 
 
+_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+    )
+}
+
+
+def _image_metadata(opts: dict[str, Any]) -> dict[str, Any]:
+    """Fetch the HPImageArchive metadata and return today's image entry.
+
+    Shared by :func:`fetch` and :func:`probe` — the metadata document is
+    ~1 KiB, so the probe path never touches the image itself.
+    """
+    params = {
+        "format": "js",
+        "idx": str(int(opts["index"])),
+        "n": "1",
+        "mkt": str(opts["mkt"]),
+    }
+
+    try:
+        from trinity.providers.builtin import _http
+
+        meta = _http.fetch_metadata_json(
+            _METADATA_URL,
+            params=params,
+            headers=_HEADERS,
+            timeout=float(opts["timeout"]),
+        )
+    except httpx.HTTPError as exc:
+        # Covers timeouts, DNS/connection failures, and 4xx/5xx statuses.
+        # Wrapped so the CLI reports a clean provider failure instead of
+        # an "unexpected error" traceback for a transient network problem.
+        raise ProviderError(f"bing provider: HTTP request failed: {exc}") from exc
+
+    try:
+        image_meta = meta["images"][0]
+    except (KeyError, IndexError, TypeError) as exc:
+        raise ProviderError(f"unexpected Bing metadata shape: {meta!r}") from exc
+    if not isinstance(image_meta, dict):
+        raise ProviderError(f"unexpected Bing metadata shape: {meta!r}")
+    return image_meta
+
+
 def fetch(options: dict[str, Any]) -> FetchedImage:
     """Fetch today's Bing Picture of the Day as JPEG bytes.
 
@@ -77,40 +122,9 @@ def fetch(options: dict[str, Any]) -> FetchedImage:
     exceeding the size cap.
     """
     opts = {**_DEFAULT_OPTIONS, **options}
-    timeout = float(opts["timeout"])
-    index = int(opts["index"])
 
-    params = {
-        "format": "js",
-        "idx": str(index),
-        "n": "1",
-        "mkt": str(opts["mkt"]),
-    }
-
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/120.0 Safari/537.36"
-        )
-    }
-
-    try:
-        from trinity.providers.builtin import _http
-
-        meta = _http.fetch_metadata_json(
-            _METADATA_URL, params=params, headers=headers, timeout=timeout
-        )
-    except httpx.HTTPError as exc:
-        # Covers timeouts, DNS/connection failures, and 4xx/5xx statuses.
-        # Wrapped so the CLI reports a clean provider failure instead of
-        # an "unexpected error" traceback for a transient network problem.
-        raise ProviderError(f"bing provider: HTTP request failed: {exc}") from exc
-
-    try:
-        image_meta = meta["images"][0]
-        rel_url = image_meta["url"]
-    except (KeyError, IndexError, TypeError) as exc:
-        raise ProviderError(f"unexpected Bing metadata shape: {meta!r}") from exc
+    image_meta = _image_metadata(opts)
+    rel_url = image_meta.get("url")
 
     if not isinstance(rel_url, str) or not rel_url.startswith("/"):
         raise ProviderError(f"Bing returned non-relative image URL: {rel_url!r}")
@@ -123,10 +137,29 @@ def fetch(options: dict[str, Any]) -> FetchedImage:
     from trinity.providers.builtin import _http
 
     data, content_type = _http.download_image(
-        image_url, headers=headers, timeout=timeout
+        image_url, headers=_HEADERS, timeout=float(opts["timeout"])
     )
     return FetchedImage(
         data=data,
         content_type=content_type,
         suggested_extension=".jpg",
     )
+
+
+def probe(options: dict[str, Any]) -> str:
+    """Cheap change probe: fetch only the metadata document.
+
+    The token prefers ``hsh`` (the content hash Bing publishes per
+    image), falling back to ``urlbase``/``url``.  The market is folded
+    in because the same day maps to different images per market.
+    """
+    opts = {**_DEFAULT_OPTIONS, **options}
+    image_meta = _image_metadata(opts)
+    identity = (
+        image_meta.get("hsh") or image_meta.get("urlbase") or image_meta.get("url")
+    )
+    if not isinstance(identity, str) or not identity:
+        raise ProviderError(
+            f"Bing metadata has no usable image identity: {image_meta!r}"
+        )
+    return f"{opts['mkt']}:{identity}"
