@@ -45,7 +45,7 @@ trinity = "trinity.cli:run"
 [dependency-groups]
 dev = [
   "ruff>=0.8",
-  "mypy>=1.10",
+  "mypy>=2.2.0",
 ]
 test = [
   "pytest>=8.2,<9",
