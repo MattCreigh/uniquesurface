@@ -8,7 +8,7 @@ covers the development setup, code style, and quality gates.
 trinity uses [uv](https://docs.astral.sh/uv/) for dependency management.
 
 ```sh
-git clone https://github.com/MattCreigh/trinity.git
+git clone https://github.com/MattCreigh/uniquesurface.git
 cd trinity
 uv sync --group test    # create venv + install dev + test deps
 ```

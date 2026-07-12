@@ -33,9 +33,9 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/MattCreigh/trinity"
-Repository = "https://github.com/MattCreigh/trinity"
-Changelog = "https://github.com/MattCreigh/trinity/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/MattCreigh/uniquesurface"
+Repository = "https://github.com/MattCreigh/uniquesurface"
+Changelog = "https://github.com/MattCreigh/uniquesurface/blob/main/CHANGELOG.md"
 
 [project.scripts]
 trinity = "trinity.cli:run"
