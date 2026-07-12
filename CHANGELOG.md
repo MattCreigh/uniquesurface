@@ -6,6 +6,12 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.2] — 2026-07-12
+
+### Added
+
+- **Support for the `plasmalogin` (Plasma Login Manager) display manager.** Trinity now automatically detects when `plasmalogin` is the active display manager (replacing SDDM) and writes its wallpaper configuration drop-in file to `/etc/plasmalogin.conf.d/trinity.conf` instead of SDDM's `/usr/share/sddm/themes/breeze/theme.conf.user`.
+
 ## [0.2.1] — 2026-07-12
 
 ### Fixed

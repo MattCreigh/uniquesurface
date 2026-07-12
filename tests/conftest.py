@@ -64,3 +64,11 @@ def _no_dns_pinning(monkeypatch):
     test isolation aid.
     """
     monkeypatch.setattr(_http, "_resolve_safely_hook", lambda host: host)
+
+
+@pytest.fixture(autouse=True)
+def _mock_is_plasmalogin_active(monkeypatch):
+    """Disable plasmalogin active check by default for all tests."""
+    from trinity.backends import login
+    monkeypatch.setattr(login, "is_plasmalogin_active", lambda: False)
+

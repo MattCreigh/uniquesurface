@@ -24,6 +24,26 @@ _THEME_CONF_PATH = Path("/usr/share/sddm/themes/breeze/theme.conf")
 # by deleting ``theme.conf.user``.
 _THEME_CONF_USER_PATH = Path("/usr/share/sddm/themes/breeze/theme.conf.user")
 _DEFAULT_COMMENT = "# managed by trinity"
+_PLASMALOGIN_CONF_DIR = Path("/etc/plasmalogin.conf.d")
+_PLASMALOGIN_DROPIN = Path("/etc/plasmalogin.conf.d/trinity.conf")
+
+
+def is_plasmalogin_active() -> bool:
+    """Return True if plasmalogin is the active display manager."""
+    import shutil
+    systemctl = shutil.which("systemctl")
+    if not systemctl:
+        return Path("/usr/lib/plasmalogin").is_dir()
+    import subprocess
+    try:
+        probe = subprocess.run(
+            [systemctl, "is-active", "--quiet", "plasmalogin"],
+            check=False,
+            capture_output=True,
+        )
+        return probe.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
 
 
 class LoginBackend:
@@ -35,6 +55,8 @@ class LoginBackend:
 
     If ``theme.conf`` does not exist (e.g. an unsupported SDDM theme
     is installed) the backend logs and does nothing.
+
+    For plasmalogin, writes to /etc/plasmalogin.conf.d/trinity.conf.
     """
 
     name = "login"
@@ -42,12 +64,21 @@ class LoginBackend:
     def __init__(self, *, accent_color: str | None = None) -> None:
         self._accent_color = accent_color
 
+
     def apply(self, manifest: Manifest, wallpaper: Path) -> None:
+        if is_plasmalogin_active():
+            self._write_plasmalogin_conf(manifest, wallpaper)
+            return
         if not _THEME_CONF_PATH.exists():
             return
         self._write_conf(manifest, wallpaper)
 
     def dry_run_plan(self, wallpaper: Path) -> list[str]:
+        if is_plasmalogin_active():
+            return [
+                f"write {_PLASMALOGIN_DROPIN}: set WallpaperPluginId=org.kde.image",
+                f"write {_PLASMALOGIN_DROPIN}: set Image=file://{wallpaper}",
+            ]
         if not _THEME_CONF_PATH.exists():
             return [f"# {self.name}: {_THEME_CONF_PATH} not present; skipped"]
         # Phase 5: wallpaper-only path writes theme.conf.user (no
@@ -95,6 +126,35 @@ class LoginBackend:
             mode=0o644,
         )
 
+    def _write_plasmalogin_conf(self, manifest: Manifest, wallpaper: Path) -> None:
+        target = wallpaper.absolute()
+        if not _can_write(_PLASMALOGIN_DROPIN):
+            raise BackendError(
+                f"{_PLASMALOGIN_CONF_DIR} is not writable",
+                hint=(
+                    "the plasmalogin configuration directory requires root. Re-run with "
+                    "sudo, e.g.\n  sudo trinity apply"
+                ),
+            )
+        lines = [
+            "[Greeter]",
+            "WallpaperPluginId=org.kde.image",
+            "",
+            "[Greeter][Wallpaper][org.kde.image][General]",
+            f"Image=file://{target}",
+        ]
+        new_text = "\n".join(lines) + "\n"
+
+        from trinity.manifest import write_tracked
+
+        _PLASMALOGIN_CONF_DIR.mkdir(parents=True, exist_ok=True)
+        write_tracked(
+            manifest,
+            _PLASMALOGIN_DROPIN,
+            new_text.encode("utf-8"),
+            mode=0o644,
+        )
+
 
 def _set_key(text: str, line_re: re.Pattern[str], key: str, value: str) -> str:
     """Set ``key=value`` in a theme.conf-style INI text.
@@ -112,29 +172,35 @@ def _set_key(text: str, line_re: re.Pattern[str], key: str, value: str) -> str:
 def _can_write(path: Path) -> bool:
     """Return True if the current process can write to ``path``.
 
-    Checks the parent directory as well, because the file may be
-    replaced atomically (which requires write access on the directory).
+    Checks the parent directories as well, because the directory or file
+    may be created or replaced atomically (which requires write access
+    on the first existing ancestor directory).
     """
     if path.exists():
         return os.access(path, os.W_OK)
-    return os.access(path.parent, os.W_OK)
+    p = path.parent
+    while not p.exists() and p != p.parent:
+        p = p.parent
+    return os.access(p, os.W_OK)
+
 
 
 def login_surface_needs_root() -> bool:
-    """Return True if the SDDM login surface is present but not writable
-    by the current user (i.e. the apply step for login will require root).
+    """Return True if the SDDM or plasmalogin login surface is present but
+    not writable by the current user (i.e. the apply step for login will
+    require root).
 
     Encapsulates the path-existence + writability + euid check so the
-    CLI doesn't need to import the private ``_THEME_CONF_USER_PATH``
-    or reimplement ``_can_write``.
-
-    As of Phase 5 the writable target is ``theme.conf.user`` (next to
-    the vendor ``theme.conf``); the existence check still gates on the
-    vendor ``theme.conf`` because if that's missing, SDDM itself is
-    not installed and there's nothing to write.
+    CLI doesn't need to import private paths or duplicate logic.
     """
+    if is_plasmalogin_active():
+        if os.geteuid() == 0:
+            return False
+        return not _can_write(_PLASMALOGIN_DROPIN)
+
     if not _THEME_CONF_PATH.exists():
         return False
     if os.geteuid() == 0:
         return False
     return not _can_write(_THEME_CONF_USER_PATH)
+
