@@ -42,6 +42,20 @@ def respx_mock():
 
 
 @pytest.fixture(autouse=True)
+def _pin_plasma_version(monkeypatch):
+    """Pin the detected Plasma version for the whole suite.
+
+    The orchestrator skips all QML patching when the version is unknown
+    (no plasmashell on CI runners) but patches for real when the host
+    has one — so without a pin, test behavior depends on the machine
+    (three tests failed on CI while passing on dev boxes). 6.7.0 is
+    inside every packaged descriptor's supported range. Tests that
+    exercise detection itself override or delete this variable.
+    """
+    monkeypatch.setenv("TRINITY_PLASMA_VERSION", "6.7.0")
+
+
+@pytest.fixture(autouse=True)
 def _no_dns_pinning(monkeypatch):
     """Disable the pre-flight DNS safety check in ``_http`` for tests.
 
