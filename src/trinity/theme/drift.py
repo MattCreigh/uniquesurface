@@ -359,6 +359,16 @@ def handle_drift(name: str, vendor_path: Path) -> Path | None:
                 f"Cannot create backup {backup_path}: permission denied. "
                 "Please run as root/sudo to patch system files."
             ) from exc
+        # Retention: the content-dedupe above only prevents duplicates of
+        # the *same* drifted content. During active iteration the vendor
+        # file changes between applies, which once littered a system
+        # directory with 100+ timestamped backups. Keep the newest few.
+        for removed in _prune_old_backups(vendor_path):
+            log.warning(
+                "qml_drift_backup_pruned",
+                vendor_path=str(vendor_path),
+                backup_path=str(removed),
+            )
 
     # 2. Refuse to adopt the drifted content as pristine. Raise so the
     #    orchestrator can skip this file and report the remediation.
@@ -382,3 +392,30 @@ def _existing_backup(vendor_path: Path, content_sha: str | None) -> Path | None:
         if sha256_file(candidate) == content_sha:
             return candidate
     return None
+
+
+# How many drift backups to retain per vendor file. The newest backup is
+# always the one the current DriftError message points at, so it is never
+# pruned; two older generations give enough forensic history without
+# letting a dev loop fill the vendor directory.
+_MAX_DRIFT_BACKUPS = 3
+
+
+def _prune_old_backups(
+    vendor_path: Path, *, keep: int = _MAX_DRIFT_BACKUPS
+) -> list[Path]:
+    """Remove all but the ``keep`` newest drift backups of ``vendor_path``.
+
+    The ``YYYYMMDD_HHMMSS`` timestamp suffix sorts lexicographically in
+    chronological order. Removal failures are skipped — retention is
+    best-effort and must never turn a drift report into a crash.
+    """
+    backups = sorted(vendor_path.parent.glob(f"{vendor_path.name}.trinity.drift.*"))
+    removed: list[Path] = []
+    for old in backups[:-keep] if keep > 0 else backups:
+        try:
+            old.unlink()
+            removed.append(old)
+        except OSError:
+            continue
+    return removed

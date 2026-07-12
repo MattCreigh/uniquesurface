@@ -6,6 +6,32 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-07-12
+
+### Fixed
+
+- **Drift backups are now capped at 3 per vendor file.** The existing
+  content-dedupe only prevented duplicates of identical drifted
+  content; during active iteration the vendor file changes between
+  applies, which littered the system lockscreen directory with 100+
+  timestamped `.trinity.drift.*` backups. `handle_drift` now prunes to
+  the newest `_MAX_DRIFT_BACKUPS` (3) after creating a backup — the
+  backup the current `DriftError` points at is always the newest, so
+  it is never pruned. (Backups from older naming schemes, e.g.
+  `.usurface.drift.*`, are not managed — remove those manually.)
+- `tests/test_graceful_failure.py` built configs without
+  `theme_tokens`, so the omitted-key auto-migration enabled QML
+  patching and the pipeline probed real `/usr/share` vendor files from
+  inside the test. Hermetic now (same fix as the CLI tests in 0.2.0).
+- Docs claimed the HTTP layer does "IP-pinned DNS resolution"; it
+  deliberately does not (pre-flight resolve + private-address
+  rejection only, so TLS SNI keeps working). Wording corrected in the
+  config reference and docstrings, and the unused `_pin_host` helper
+  (plus its tests) removed.
+- The `--restart-dm` privilege hint printed a raw uid comparison
+  ("requested but 1000 != 0"); it now explains that root or
+  sudo/pkexec is required.
+
 ## [0.2.0] — 2026-07-12
 
 ### Fixed

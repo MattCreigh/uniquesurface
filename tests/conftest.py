@@ -43,9 +43,10 @@ def respx_mock():
 
 @pytest.fixture(autouse=True)
 def _no_dns_pinning(monkeypatch):
-    """Disable DNS-to-IP pinning in ``_http`` for tests.
+    """Disable the pre-flight DNS safety check in ``_http`` for tests.
 
-    respx mocks by hostname, not IP.  Production code still does the
-    IP pinning — this is purely a test isolation aid.
+    respx mocks by hostname and the mock hosts don't resolve.
+    Production code still runs the SSRF pre-flight — this is purely a
+    test isolation aid.
     """
     monkeypatch.setattr(_http, "_resolve_safely_hook", lambda host: host)

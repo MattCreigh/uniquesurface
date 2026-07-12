@@ -232,3 +232,72 @@ def test_handle_drift_raises_instead_of_adopting(
     # 5. The stored pristine was NOT updated — drift still detected.
     report = drift.check("sddm_login", seeded_templates)
     assert report.on_disk_matches_pristine is False
+
+
+def test_handle_drift_prunes_old_backups(seeded_templates: Path) -> None:
+    """Repeated drift with *changing* content (the dev-loop case) must not
+    accumulate backups without bound: only the newest _MAX_DRIFT_BACKUPS
+    per vendor file survive, and the newest one always matches the
+    backup_path the DriftError points at."""
+    original_text = seeded_templates.read_text(encoding="utf-8")
+
+    last_error: drift.DriftError | None = None
+    for i in range(6):
+        seeded_templates.write_text(
+            f"{original_text}\n// upstream change {i}\n", encoding="utf-8"
+        )
+        with pytest.raises(drift.DriftError) as exc_info:
+            drift.handle_drift("sddm_login", seeded_templates)
+        last_error = exc_info.value
+
+    backups = sorted(seeded_templates.parent.glob("Login.qml.trinity.drift.*"))
+    assert len(backups) <= drift._MAX_DRIFT_BACKUPS
+    assert last_error is not None
+    # The newest backup (the one the last error reported) was never pruned.
+    assert last_error.backup_path in backups
+    assert last_error.backup_path.read_text(encoding="utf-8").endswith(
+        "// upstream change 5\n"
+    )
+
+
+def test_handle_drift_dedupes_identical_content_without_pruning(
+    seeded_templates: Path,
+) -> None:
+    """Unchanged drifted content (the unattended-timer case) reuses the
+    existing backup instead of creating -- or pruning -- anything."""
+    seeded_templates.write_text(
+        seeded_templates.read_text(encoding="utf-8") + "\n// same drift\n",
+        encoding="utf-8",
+    )
+    for _ in range(3):
+        with pytest.raises(drift.DriftError):
+            drift.handle_drift("sddm_login", seeded_templates)
+
+    backups = list(seeded_templates.parent.glob("Login.qml.trinity.drift.*"))
+    assert len(backups) == 1
+
+
+def test_prune_old_backups_keeps_newest_n(tmp_path: Path) -> None:
+    """Direct check of the retention helper: oldest backups beyond the
+    cap are removed, newest kept, chronological by timestamp suffix."""
+    vendor = tmp_path / "Login.qml"
+    vendor.write_text("Item {}\n", encoding="utf-8")
+    stamps = [f"2026070{d}_120000" for d in range(1, 7)]  # 6 backups, day 1..6
+    for stamp in stamps:
+        (tmp_path / f"Login.qml.trinity.drift.{stamp}").write_text(
+            stamp, encoding="utf-8"
+        )
+
+    removed = drift._prune_old_backups(vendor)
+
+    survivors = sorted(p.name for p in tmp_path.glob("Login.qml.trinity.drift.*"))
+    assert len(survivors) == drift._MAX_DRIFT_BACKUPS
+    # The three newest (days 4, 5, 6) survive; days 1-3 were removed.
+    assert survivors == [
+        f"Login.qml.trinity.drift.2026070{d}_120000" for d in (4, 5, 6)
+    ]
+    assert sorted(p.name for p in removed) == [
+        f"Login.qml.trinity.drift.2026070{d}_120000" for d in (1, 2, 3)
+    ]
+    # A different vendor file's backups are untouched by design (glob is
+    # anchored to the vendor filename).

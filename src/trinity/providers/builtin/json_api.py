@@ -17,8 +17,8 @@ Recipe fields (all required, validated at config-load time):
 Security guardrails are inherited from :mod:`trinity.providers.builtin._http`:
 
 - HTTPS only for both metadata and image URLs.
-- SSRF defense: private/loopback/link-local/reserved addresses are
-  rejected via DNS resolution pinning on every request (and on every
+- SSRF defense: a pre-flight DNS check rejects private/loopback/
+  link-local/reserved addresses on every request (and on every
   redirect hop).
 - Redirect cap of 5.
 - 5 MiB metadata cap, 50 MiB image cap.

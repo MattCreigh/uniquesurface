@@ -22,7 +22,7 @@ from __future__ import annotations
 import ipaddress
 import socket
 from typing import Any
-from urllib.parse import urljoin, urlparse, urlunparse
+from urllib.parse import urljoin, urlparse
 
 import httpx
 
@@ -39,27 +39,6 @@ _MAX_PARAM_VALUE_LEN = 1024
 
 class SSRFError(ProviderError):
     """Raised when an HTTP request would target a private/reserved address."""
-
-
-def _pin_host(url: str, pinned_ip: str) -> str:
-    """Replace the hostname in ``url`` with ``pinned_ip`` for connect.
-
-    Handles IPv6 by wrapping the address in square brackets.  Returns
-    the URL unchanged if there is no netloc (e.g. relative path).
-    """
-    parsed = urlparse(url)
-    if not parsed.netloc:
-        return url
-    # IPv6 addresses must be wrapped in [...] in URLs.
-    host_in_url = f"[{pinned_ip}]" if ":" in pinned_ip else pinned_ip
-    new_netloc = (
-        f"{parsed.username or ''}"
-        f"{':' + parsed.password if parsed.password else ''}"
-        f"{'@' if parsed.username or parsed.password else ''}"
-        f"{host_in_url}"
-        f"{f':{parsed.port}' if parsed.port is not None else ''}"
-    )
-    return urlunparse(parsed._replace(netloc=new_netloc))
 
 
 def _check_scheme(url: str) -> None:

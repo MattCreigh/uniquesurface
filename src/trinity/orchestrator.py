@@ -774,8 +774,8 @@ def apply_to_surfaces(
             )
             if restart_dm and os.geteuid() != 0 and not _have_pkexec():
                 plan.append(
-                    f"  (--restart-dm requested but {os.geteuid()} != 0; "
-                    f"run with sudo to enable)"
+                    "  (--restart-dm requested, but not running as root and "
+                    "no sudo/pkexec found on PATH; re-run with sudo)"
                 )
 
     # Bound undo history: compact the manifest to the most recent

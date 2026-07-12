@@ -71,9 +71,10 @@ Opt-in switch for the QML patching machinery.
 | `index`      | int    | `0`           | Day offset (0 = today, 1 = yesterday).  |
 | `timeout`    | float  | `30.0`        | Per-request timeout in seconds.         |
 
-Downloads are capped at 50 MiB. The provider enforces HTTPS, IP-pinned
-DNS resolution (private/loopback/link-local/reserved addresses are
-rejected), and a 5-hop redirect cap.
+Downloads are capped at 50 MiB. The provider enforces HTTPS, a
+pre-flight DNS check that rejects private/loopback/link-local/reserved
+addresses (the connection itself still uses the hostname so TLS SNI
+works), and a 5-hop redirect cap.
 
 ### `json-api` options
 
@@ -89,9 +90,9 @@ APIs follow this shape.
 | `headers`          | table  | `{}`     | Optional HTTP headers (e.g. `User-Agent`).                |
 | `timeout`          | float  | `30.0`   | Per-request timeout (0 < t ≤ 300).                        |
 
-All the security guardrails from `bing` apply: HTTPS-only, IP-pinned
-DNS, private/loopback rejection, 5-hop redirect cap, 5 MiB metadata
-cap, 50 MiB image cap, header/param count and length caps.
+All the security guardrails from `bing` apply: HTTPS-only, pre-flight
+DNS rejection of private/loopback addresses, 5-hop redirect cap, 5 MiB
+metadata cap, 50 MiB image cap, header/param count and length caps.
 
 Relative image URLs in the metadata are resolved against the metadata
 URL, not the request origin.

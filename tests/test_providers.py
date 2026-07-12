@@ -808,34 +808,6 @@ def test_json_api_rejects_oversize_image(
 # --- _http SSRF helper unit tests --------------------------------------
 
 
-def test_http_pin_host_ipv4() -> None:
-    from trinity.providers.builtin import _http
-
-    out = _http._pin_host("https://example.com/path?q=1", "93.184.216.34")
-    assert out == "https://93.184.216.34/path?q=1"
-
-
-def test_http_pin_host_ipv6_brackets() -> None:
-    from trinity.providers.builtin import _http
-
-    out = _http._pin_host("https://example.com/path", "2a02:26f0:fd00:8::58dd:78da")
-    assert out == "https://[2a02:26f0:fd00:8::58dd:78da]/path"
-
-
-def test_http_pin_host_preserves_port() -> None:
-    from trinity.providers.builtin import _http
-
-    out = _http._pin_host("https://example.com:8443/x", "10.0.0.1")
-    assert out == "https://10.0.0.1:8443/x"
-
-
-def test_http_pin_host_preserves_query() -> None:
-    from trinity.providers.builtin import _http
-
-    out = _http._pin_host("https://example.com/x?a=1&b=2", "10.0.0.1")
-    assert out == "https://10.0.0.1/x?a=1&b=2"
-
-
 def test_http_sanitise_headers_caps_count() -> None:
     from trinity.providers.builtin import _http
 

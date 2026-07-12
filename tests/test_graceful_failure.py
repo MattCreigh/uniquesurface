@@ -19,10 +19,14 @@ from trinity.schema import (
     Source,
     SourceOptions,
     Surface,
+    ThemeTokens,
 )
 
 
 def _make_config(tmp_path: Path) -> Config:
+    """theme_tokens is explicitly disabled: the omitted-key auto-migration
+    would enable it and the QML pipeline would probe the real /usr/share
+    vendor files from inside the test."""
     return Config(
         surface=Surface(
             source=Source(
@@ -38,6 +42,7 @@ def _make_config(tmp_path: Path) -> Config:
                 shared_dir=str(tmp_path / "shared"),
                 user_dir=str(tmp_path / "user"),
             ),
+            theme_tokens=ThemeTokens(enabled=False),
         )
     )
 
