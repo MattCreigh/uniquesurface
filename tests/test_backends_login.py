@@ -30,7 +30,6 @@ def fake_theme_conf(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return conf
 
 
-
 def test_login_writes_theme_conf_user_not_vendor(
     fake_theme_conf: Path, tmp_path: Path
 ) -> None:
@@ -178,7 +177,7 @@ def test_login_apply_raises_when_not_writable(
 def test_login_writes_plasmalogin_conf(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """When plasmalogin is active, the backend writes to its conf.d/trinity.conf drop-in."""
+    """With plasmalogin active, the backend writes the conf.d drop-in."""
     from trinity.backends import login as login_mod
 
     monkeypatch.setattr(login_mod, "is_plasmalogin_active", lambda: True)
@@ -201,7 +200,7 @@ def test_login_writes_plasmalogin_conf(
 def test_login_plasmalogin_dry_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """When plasmalogin is active, the dry-run plan reports the correct config drop-in path."""
+    """With plasmalogin active, the dry-run plan names the drop-in path."""
     from trinity.backends import login as login_mod
 
     monkeypatch.setattr(login_mod, "is_plasmalogin_active", lambda: True)
@@ -221,12 +220,13 @@ def test_login_plasmalogin_dry_run(
 def test_login_plasmalogin_needs_root_when_not_writable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """When plasmalogin is active, needs_root reports True when the drop-in path is not writable."""
+    """With plasmalogin active, needs_root is True if the drop-in isn't writable."""
     from trinity.backends import login as login_mod
 
     monkeypatch.setattr(login_mod, "is_plasmalogin_active", lambda: True)
     monkeypatch.setattr(login_mod, "_can_write", lambda path: False)
     import os
+
     monkeypatch.setattr(os, "geteuid", lambda: 1000)
 
     assert login_mod.login_surface_needs_root() is True

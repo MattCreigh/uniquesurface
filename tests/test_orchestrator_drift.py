@@ -50,8 +50,11 @@ def test_drifted_qml_file_is_skipped_while_others_apply(
     monkeypatch.setattr(paths, "templates_dir", lambda: templates)
 
     # Create vendor files on disk (in tmp) for each DEFAULT_TARGETS entry.
+    from trinity.backends import sddm_fork
+
+    sddm_fork.VENDOR_BREEZE_DIR.mkdir(parents=True, exist_ok=True)
     targets = [
-        ("sddm_login", tmp_path / "Login.qml"),
+        ("sddm_login", sddm_fork.VENDOR_BREEZE_DIR / "Login.qml"),
         ("plasma_lockscreen_mainblock", tmp_path / "MainBlock.qml"),
         ("plasma_lockscreen_ui", tmp_path / "LockScreenUi.qml"),
     ]
@@ -124,8 +127,11 @@ def test_adopt_drift_adopts_and_patches(
     templates.mkdir()
     monkeypatch.setattr(paths, "templates_dir", lambda: templates)
 
+    from trinity.backends import sddm_fork
+
+    sddm_fork.VENDOR_BREEZE_DIR.mkdir(parents=True, exist_ok=True)
     targets = [
-        ("sddm_login", tmp_path / "Login.qml"),
+        ("sddm_login", sddm_fork.VENDOR_BREEZE_DIR / "Login.qml"),
         ("plasma_lockscreen_mainblock", tmp_path / "MainBlock.qml"),
         ("plasma_lockscreen_ui", tmp_path / "LockScreenUi.qml"),
     ]

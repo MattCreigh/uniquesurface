@@ -6,6 +6,13 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.3] — 2026-07-13
+
+### Added
+
+- **SDDM Theme Forking Integration.** Instead of patching the vendor Breeze theme's `Login.qml` in place (which is vulnerable to being overwritten by Plasma upgrades), Trinity now copies the Breeze theme to `/usr/share/sddm/themes/trinity-breeze` and applies all token modifications to this custom fork. The active theme is selected via a drop-in file at `/etc/sddm.conf.d/trinity.conf`.
+- **Improved Privilege UX.** When theme tokens are enabled, the privilege checks now accurately check write permissions for the custom drop-in config and the fork directories.
+
 ## [0.2.2] — 2026-07-12
 
 ### Added

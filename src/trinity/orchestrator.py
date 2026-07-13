@@ -39,14 +39,20 @@ _LOCKSCREEN_QML_NAMES = frozenset(
 )
 
 
-def default_backends(*, accent_color: str | None = None) -> list[Backend]:
+def default_backends(
+    *, accent_color: str | None = None, forked: bool = False
+) -> list[Backend]:
     """Return the default list of backends in apply order.
 
     ``accent_color`` (from ``config.surface.login.accent_color``) is
     forwarded to the login backend so it can write the SDDM theme.conf
     ``color=`` key.
     """
-    return [DesktopBackend(), LockBackend(), LoginBackend(accent_color=accent_color)]
+    return [
+        DesktopBackend(),
+        LockBackend(),
+        LoginBackend(accent_color=accent_color, forked=forked),
+    ]
 
 
 def _has_non_default_token_values(config: Config) -> bool:
@@ -501,11 +507,28 @@ def apply_to_surfaces(
         )
         _restore_shared_owner(state_file)
 
+    if expanded.surface.theme_tokens.enabled:
+        from trinity.backends import sddm_fork
+
+        if not dry_run:
+            fork_res = sddm_fork.fork_breeze_theme(manifest)
+            if fork_res.created:
+                plan.append(f"sddm theme fork: {fork_res.message}")
+                dropin_written = sddm_fork.write_dropin(manifest)
+                plan.append(f"sddm configuration: wrote drop-in {dropin_written}")
+        else:
+            if sddm_fork.VENDOR_BREEZE_DIR.is_dir():
+                plan.append("sddm theme fork: dry-run (simulate copying Breeze theme)")
+                plan.append("sddm configuration: dry-run (simulate trinity.conf write)")
+
     login_applied = False
     for backend in (
         backends
         if backends is not None
-        else default_backends(accent_color=expanded.surface.login.accent_color)
+        else default_backends(
+            accent_color=expanded.surface.login.accent_color,
+            forked=expanded.surface.theme_tokens.enabled,
+        )
     ):
         # Desktop/lock get the content-addressed path: Plasma caches by
         # URI, so only a changing value forces a repaint. Login gets the
@@ -547,11 +570,32 @@ def apply_to_surfaces(
                 "  warning: font/lock/login token values are set but ignored "
                 "while theme_tokens is disabled"
             )
+        from trinity.backends import sddm_fork
+
+        if not dry_run:
+            if sddm_fork.remove_dropin(manifest):
+                plan.append("sddm configuration: removed drop-in trinity.conf")
+            if sddm_fork.remove_fork(manifest):
+                plan.append("sddm theme fork: removed fork directory trinity-breeze")
+        else:
+            if sddm_fork.is_active():
+                plan.append("sddm configuration: dry-run (simulate drop-in removal)")
+                plan.append(
+                    "sddm theme fork: dry-run (simulate fork directory removal)"
+                )
     elif dry_run:
+        from trinity.backends import sddm_fork
+
         for name, vendor_path in extract.DEFAULT_TARGETS:
+            path = (
+                sddm_fork.FORK_THEME_DIR / vendor_path.name
+                if (name == "sddm_login" and expanded.surface.theme_tokens.enabled)
+                else vendor_path
+            )
             if vendor_path.is_file():
-                plan.append(f"patch QML {name} ({vendor_path}) with font/theme tokens")
+                plan.append(f"patch QML {name} ({path}) with font/theme tokens")
     else:
+        from trinity.backends import sddm_fork
         from trinity.theme import drift
         from trinity.theme.descriptors import (
             detect_plasma_version,
@@ -596,6 +640,11 @@ def apply_to_surfaces(
         for name, vendor_path in extract.DEFAULT_TARGETS:
             if not vendor_path.is_file():
                 continue
+            path = (
+                sddm_fork.FORK_THEME_DIR / vendor_path.name
+                if (name == "sddm_login" and expanded.surface.theme_tokens.enabled)
+                else vendor_path
+            )
             descriptor = select_descriptor(name, plasma)
             if descriptor is None:
                 plan.append(
@@ -614,7 +663,7 @@ def apply_to_surfaces(
                 # Patch font tokens on all targets.
                 msg = apply_font_tokens(
                     name=name,
-                    vendor_path=vendor_path,
+                    vendor_path=path,
                     manifest=manifest,
                     patch=font_patch,
                 )
@@ -632,7 +681,7 @@ def apply_to_surfaces(
                 if name in _LOCKSCREEN_QML_NAMES:
                     lmsg = apply_lock_tokens(
                         name=name,
-                        vendor_path=vendor_path,
+                        vendor_path=path,
                         manifest=manifest,
                         patch=lock_patch,
                     )
@@ -643,13 +692,13 @@ def apply_to_surfaces(
                 # greeter / lock screen to fall back to the built-in
                 # blue locker.  Fail closed: roll the patched bytes
                 # back via the manifest and surface the error.
-                lint = qmllint_lint_file(vendor_path)
+                lint = qmllint_lint_file(path)
                 if not lint.ok:
                     from trinity.theme import extract as _extract
 
                     pristine = _extract.read_pristine(name)
                     if pristine is not None:
-                        write_tracked(manifest, vendor_path, pristine, mode=0o644)
+                        write_tracked(manifest, path, pristine, mode=0o644)
                     plan.append(
                         f"QML backend '{name}' LINT FAILED; reverted to pristine"
                     )
@@ -684,7 +733,7 @@ def apply_to_surfaces(
                     # Re-run the patch with the new baseline.
                     msg = apply_font_tokens(
                         name=name,
-                        vendor_path=vendor_path,
+                        vendor_path=path,
                         manifest=manifest,
                         patch=font_patch,
                     )
@@ -695,7 +744,7 @@ def apply_to_surfaces(
                     if name in _LOCKSCREEN_QML_NAMES:
                         lmsg = apply_lock_tokens(
                             name=name,
-                            vendor_path=vendor_path,
+                            vendor_path=path,
                             manifest=manifest,
                             patch=lock_patch,
                         )
@@ -722,7 +771,7 @@ def apply_to_surfaces(
             except OSError as exc:
                 # Drift backup creation or atomic write failed (likely
                 # permission). Treat as a backend failure.
-                msg = f"{vendor_path}: {exc}"
+                msg = f"{path}: {exc}"
                 hint = (
                     "QML patching needs to write to system paths. "
                     "Re-run with sudo, e.g.  sudo trinity apply"

@@ -1,52 +1,47 @@
-"""Login-screen wallpaper backend.
-
-Patches the SDDM Breeze theme's ``theme.conf`` to point at the chosen
-wallpaper and (optionally) set the accent/solid ``color=`` key. QML
-font / theme-token patching lives in :mod:`trinity.theme.qml_patch`
-and is invoked by the orchestrator, not here.
-"""
+"""Login screen (SDDM/plasmalogin) background backend."""
 
 from __future__ import annotations
 
 import os
 import re
+import shutil
+import subprocess
 from pathlib import Path
 
-from trinity.backends.base import BackendError
+from trinity.backends.base import Backend, BackendError
 from trinity.manifest import Manifest
 
-_BG_LINE_RE = re.compile(r"^(\s*background\s*=\s*).*$", re.MULTILINE)
-_COLOR_LINE_RE = re.compile(r"^(\s*color\s*=\s*).*$", re.MULTILINE)
 _THEME_CONF_PATH = Path("/usr/share/sddm/themes/breeze/theme.conf")
-# As of Phase 5 we also write ``theme.conf.user`` alongside the base
-# config.  SDDM merges ``theme.conf.user`` over ``theme.conf`` so this
-# avoids editing the vendor file — the wallpaper change is reversible
-# by deleting ``theme.conf.user``.
 _THEME_CONF_USER_PATH = Path("/usr/share/sddm/themes/breeze/theme.conf.user")
-_DEFAULT_COMMENT = "# managed by trinity"
+
 _PLASMALOGIN_CONF_DIR = Path("/etc/plasmalogin.conf.d")
-_PLASMALOGIN_DROPIN = Path("/etc/plasmalogin.conf.d/trinity.conf")
+_PLASMALOGIN_DROPIN = _PLASMALOGIN_CONF_DIR / "trinity.conf"
+
+_DEFAULT_COMMENT = "# Written by Trinity — unified surface manager."
 
 
 def is_plasmalogin_active() -> bool:
-    """Return True if plasmalogin is the active display manager."""
-    import shutil
+    """Return True if plasmalogin is the currently active DM unit.
+
+    Neon systems run plasmalogin (which overrides SDDM configuration).
+    In this case, modifying SDDM Breeze configs is ignored, and we must
+    write the greeter wallpaper configuration to /etc/plasmalogin.conf.d/
+    instead.
+    """
     systemctl = shutil.which("systemctl")
     if not systemctl:
-        return Path("/usr/lib/plasmalogin").is_dir()
-    import subprocess
-    try:
-        probe = subprocess.run(
-            [systemctl, "is-active", "--quiet", "plasmalogin"],
-            check=False,
-            capture_output=True,
-        )
-        return probe.returncode == 0
-    except (OSError, subprocess.SubprocessError):
         return False
+    # is-active checks if the unit is loaded and running. --quiet suppresses
+    # output; exit code 0 means active.
+    res = subprocess.run(
+        [systemctl, "is-active", "--quiet", "plasmalogin"],
+        check=False,
+        capture_output=True,
+    )
+    return res.returncode == 0
 
 
-class LoginBackend:
+class LoginBackend(Backend):
     """Writes the SDDM theme.conf ``background=`` line.
 
     If ``accent_color`` is provided, also writes ``color=`` (the SDDM
@@ -61,15 +56,23 @@ class LoginBackend:
 
     name = "login"
 
-    def __init__(self, *, accent_color: str | None = None) -> None:
+    def __init__(
+        self, *, accent_color: str | None = None, forked: bool = False
+    ) -> None:
         self._accent_color = accent_color
+        self._forked = forked
 
+    @property
+    def forked(self) -> bool:
+        from trinity.backends.sddm_fork import FORK_THEME_DIR
+
+        return self._forked or FORK_THEME_DIR.is_dir()
 
     def apply(self, manifest: Manifest, wallpaper: Path) -> None:
         if is_plasmalogin_active():
             self._write_plasmalogin_conf(manifest, wallpaper)
             return
-        if not _THEME_CONF_PATH.exists():
+        if not _THEME_CONF_PATH.exists() and not self.forked:
             return
         self._write_conf(manifest, wallpaper)
 
@@ -79,15 +82,16 @@ class LoginBackend:
                 f"write {_PLASMALOGIN_DROPIN}: set WallpaperPluginId=org.kde.image",
                 f"write {_PLASMALOGIN_DROPIN}: set Image=file://{wallpaper}",
             ]
-        if not _THEME_CONF_PATH.exists():
-            return [f"# {self.name}: {_THEME_CONF_PATH} not present; skipped"]
-        # Phase 5: wallpaper-only path writes theme.conf.user (no
-        # vendor file edit).  See docs/design/override-mechanisms.md.
-        plan = [f"write {_THEME_CONF_USER_PATH}: set background={wallpaper}"]
+        from trinity.backends.sddm_fork import FORK_THEME_DIR
+
+        user_path = (
+            FORK_THEME_DIR / "theme.conf.user" if self.forked else _THEME_CONF_USER_PATH
+        )
+        if not _THEME_CONF_PATH.exists() and not self.forked:
+            return [f"# {self.name}: {user_path.parent} not present; skipped"]
+        plan = [f"write {user_path}: set background={wallpaper}"]
         if self._accent_color is not None:
-            plan.append(
-                f"write {_THEME_CONF_USER_PATH}: set color={self._accent_color}"
-            )
+            plan.append(f"write {user_path}: set color={self._accent_color}")
         return plan
 
     def _write_conf(self, manifest: Manifest, wallpaper: Path) -> None:
@@ -97,13 +101,14 @@ class LoginBackend:
         # current image without theme.conf.user (usually root-owned)
         # needing a rewrite. Resolving would pin the hash-named target.
         target = wallpaper.absolute()
-        # Phase 5: write theme.conf.user (the sanctioned SDDM override
-        # mechanism) rather than editing the vendor theme.conf.  SDDM
-        # merges .user over the base config, so this is reversible by
-        # deleting theme.conf.user.
-        if not _can_write(_THEME_CONF_USER_PATH):
+        from trinity.backends.sddm_fork import FORK_THEME_DIR
+
+        user_path = (
+            FORK_THEME_DIR / "theme.conf.user" if self.forked else _THEME_CONF_USER_PATH
+        )
+        if not _can_write(user_path):
             raise BackendError(
-                f"{_THEME_CONF_USER_PATH.parent} is not writable",
+                f"{user_path.parent} is not writable",
                 hint=(
                     "the SDDM theme directory requires root. Re-run with "
                     "sudo, e.g.\n  sudo trinity apply"
@@ -121,7 +126,7 @@ class LoginBackend:
 
         write_tracked(
             manifest,
-            _THEME_CONF_USER_PATH,
+            user_path,
             new_text.encode("utf-8"),
             mode=0o644,
         )
@@ -132,8 +137,8 @@ class LoginBackend:
             raise BackendError(
                 f"{_PLASMALOGIN_CONF_DIR} is not writable",
                 hint=(
-                    "the plasmalogin configuration directory requires root. Re-run with "
-                    "sudo, e.g.\n  sudo trinity apply"
+                    "the plasmalogin configuration directory requires root. "
+                    "Re-run with sudo, e.g.\n  sudo trinity apply"
                 ),
             )
         lines = [
@@ -184,8 +189,7 @@ def _can_write(path: Path) -> bool:
     return os.access(p, os.W_OK)
 
 
-
-def login_surface_needs_root() -> bool:
+def login_surface_needs_root(theme_tokens_enabled: bool = False) -> bool:
     """Return True if the SDDM or plasmalogin login surface is present but
     not writable by the current user (i.e. the apply step for login will
     require root).
@@ -198,9 +202,23 @@ def login_surface_needs_root() -> bool:
             return False
         return not _can_write(_PLASMALOGIN_DROPIN)
 
-    if not _THEME_CONF_PATH.exists():
-        return False
     if os.geteuid() == 0:
         return False
-    return not _can_write(_THEME_CONF_USER_PATH)
 
+    if theme_tokens_enabled:
+        from trinity.backends.sddm_fork import DROPIN_PATH, FORK_THEME_DIR
+
+        if not _can_write(DROPIN_PATH):
+            return True
+        if not FORK_THEME_DIR.is_dir():
+            if not _can_write(FORK_THEME_DIR.parent):
+                return True
+        else:
+            if not _can_write(FORK_THEME_DIR / "theme.conf.user"):
+                return True
+        return False
+
+    # Wallpaper-only mode (traditional SDDM theme.conf.user)
+    if not _THEME_CONF_PATH.exists():
+        return False
+    return not _can_write(_THEME_CONF_USER_PATH)

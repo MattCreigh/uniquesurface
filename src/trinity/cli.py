@@ -184,7 +184,8 @@ def apply(
     # but continue so the user-mode surfaces still get updated.
     from trinity.backends.login import login_surface_needs_root
 
-    if not dry_run and login_surface_needs_root():
+    tokens_enabled = cfg.surface.theme_tokens.enabled
+    if not dry_run and login_surface_needs_root(theme_tokens_enabled=tokens_enabled):
         click.echo(
             "Note: login (SDDM) surface requires root; "
             "that step will be skipped or fail unless you re-run with sudo.",

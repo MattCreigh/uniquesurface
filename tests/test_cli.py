@@ -82,8 +82,10 @@ def test_apply_real_writes_files(
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "xdg_state"))
     monkeypatch.setenv("TRINITY_SHARED_DIR", str(tmp_path / "shared"))
 
+    from trinity.backends import sddm_fork
+
     # Replace the SDDM theme.conf path with one we own.
-    fake_sddm = tmp_path / "sddm" / "breeze" / "theme.conf"
+    fake_sddm = sddm_fork.VENDOR_BREEZE_DIR / "theme.conf"
     fake_sddm.parent.mkdir(parents=True)
     fake_sddm.write_text(
         "[General]\ntype=image\nbackground=/old.jpg\n", encoding="utf-8"
@@ -91,16 +93,15 @@ def test_apply_real_writes_files(
     from trinity.backends import login as login_mod
 
     monkeypatch.setattr(login_mod, "_THEME_CONF_PATH", fake_sddm)
-    # Phase 5: wallpaper-only writes go to theme.conf.user alongside
-    # the vendor theme.conf.  Point the .user path at a sibling file.
-    fake_sddm_user = fake_sddm.parent / "theme.conf.user"
+    # Point the .user path at a sibling file in the fork directory.
+    fake_sddm_user = sddm_fork.FORK_THEME_DIR / "theme.conf.user"
     monkeypatch.setattr(login_mod, "_THEME_CONF_USER_PATH", fake_sddm_user)
 
     # Mock extract targets and pristine template directory
     from trinity import paths
     from trinity.theme import extract as extract_mod
 
-    fake_login_qml = tmp_path / "Login.qml"
+    fake_login_qml = fake_sddm.parent / "Login.qml"
     fake_login_qml.write_text(
         'import QtQuick\nItem { property string fontFamily: "Lato" }\n',
         encoding="utf-8",
@@ -189,9 +190,7 @@ user_dir = "{user_state}"
     alias = shared / "last_wallpaper.jpg"
     assert alias.is_symlink()
     assert alias.resolve() == shared_wallpapers[0]
-    # Phase 5: SDDM wallpaper now goes to theme.conf.user (the
-    # sanctioned SDDM override), not the vendor theme.conf — and it
-    # references the stable alias, not the hash-named file.
+    # Phase 5: SDDM wallpaper now goes to theme.conf.user in the fork
     assert str(alias) in fake_sddm_user.read_text()
     # The vendor theme.conf is untouched.
     assert "last_wallpaper" not in fake_sddm.read_text()
@@ -206,11 +205,11 @@ user_dir = "{user_state}"
     paths_tracked = [e.path for e in entries]
     assert any(str(user_wallpapers[0]) in p for p in paths_tracked)
     assert any(str(shared_wallpapers[0]) in p for p in paths_tracked)
-    assert any(str(fake_sddm) in p for p in paths_tracked)
-    assert any(str(fake_login_qml) in p for p in paths_tracked)
+    assert any(str(sddm_fork.FORK_THEME_DIR) in p for p in paths_tracked)
+    assert any(str(sddm_fork.DROPIN_PATH) in p for p in paths_tracked)
 
     # SDDM Login.qml is patched with Inter font
-    qml_content = fake_login_qml.read_text(encoding="utf-8")
+    qml_content = (sddm_fork.FORK_THEME_DIR / "Login.qml").read_text(encoding="utf-8")
     assert "Inter" in qml_content
     assert "/* @trinity:start */" in qml_content
 

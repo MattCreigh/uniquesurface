@@ -70,5 +70,17 @@ def _no_dns_pinning(monkeypatch):
 def _mock_is_plasmalogin_active(monkeypatch):
     """Disable plasmalogin active check by default for all tests."""
     from trinity.backends import login
+
     monkeypatch.setattr(login, "is_plasmalogin_active", lambda: False)
 
+
+@pytest.fixture(autouse=True)
+def _mock_sddm_fork_paths(tmp_path, monkeypatch):
+    """Redirect SDDM fork directories to tmp_path for all tests."""
+    from trinity.backends import sddm_fork
+
+    themes = tmp_path / "sddm" / "themes"
+    dropin = tmp_path / "etc" / "sddm.conf.d" / "trinity.conf"
+    monkeypatch.setattr(sddm_fork, "FORK_THEME_DIR", themes / "trinity-breeze")
+    monkeypatch.setattr(sddm_fork, "DROPIN_PATH", dropin)
+    monkeypatch.setattr(sddm_fork, "VENDOR_BREEZE_DIR", themes / "breeze")
