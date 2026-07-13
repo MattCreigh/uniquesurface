@@ -16,7 +16,7 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 - **The SDDM theme fork is now idempotent.** Previously every full `apply` deleted and re-copied the entire fork (churning the manifest and wiping drift backups inside the fork). The fork now records a content digest of its vendor source (`.trinity-fork-source`) and is only rebuilt when the vendor Breeze theme actually changes; the `trinity.conf` drop-in is only rewritten when missing (self-healing).
 - **The fork and drop-in are skipped when plasmalogin is the active greeter** — SDDM is not in use there, so they were inert writes requiring root for nothing.
-- CI workflows: bumped `actions/checkout` to v7, `actions/upload-artifact` to v7, and `astral-sh/setup-uv` to v8 (silences the Node 20 deprecation warnings).
+- CI workflows: bumped `actions/checkout` to v7, `actions/upload-artifact` to v7, and `astral-sh/setup-uv` to v7 (silences the Node 20 deprecation warnings).
 
 ### Documentation
 
