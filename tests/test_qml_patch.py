@@ -305,3 +305,92 @@ def test_lock_patch_skips_when_no_timer(
     assert "skipped" in msg
     # File unchanged.
     assert vendor.read_text(encoding="utf-8") == qml
+
+
+# --- Brace-balanced wake-guard removal ---------------------------
+
+
+def test_strip_wake_guard_block_handles_inner_braces() -> None:
+    """If upstream reorders or wraps the inner statements, the
+    brace-balanced removal still cleanly removes the entire block.
+
+    The block below is the same as the vendor block, but with one of
+    the inner statements wrapped in a brace block (e.g. a new
+    ``if (x) { ... }`` guard added upstream). The line-count-coupled
+    regex would have leaked two lines; the brace-balanced helper
+    removes the whole ``if (...) { ... }`` and stops at the matching
+    ``}``.
+    """
+    from trinity.theme import qml_patch
+
+    text = (
+        "Keys.onPressed: event => {\n"
+        "    if (event.key === Qt.Key_Left) {\n"
+        "        userSwitcher.show();\n"
+        "    }\n"
+        '    if (!lockScreenRoot.uiVisible && event.text !== "") '
+        "{ // @trinity:suppress_wake_keypress\n"
+        "        lockScreenRoot.uiVisible = true;\n"
+        '        if (event.text === "a") {\n'  # extra brace block
+        "            extra();\n"
+        "        }\n"
+        "        event.accepted = true;\n"
+        "        return;\n"
+        "    }\n"
+        "    passwordBox.text += event.text;\n"
+        "}\n"
+    )
+    out = qml_patch._strip_wake_guard_block(text)
+    # The guard is gone.
+    assert "// @trinity:suppress_wake_keypress" not in out
+    # The unrelated parts of the file are intact.
+    assert "passwordBox.text += event.text;" in out
+    assert "userSwitcher.show();" in out
+
+
+def test_strip_wake_guard_block_ignores_unrelated_braces() -> None:
+    """A ``}`` in a comment inside the guard block must not terminate
+    the match early — the brace walker counts at the code level, but
+    a well-formed QML block has matching braces, so the count returns
+    to zero at the right place."""
+    from trinity.theme import qml_patch
+
+    text = (
+        'if (!lockScreenRoot.uiVisible && event.text !== "") '
+        "{ // @trinity:suppress_wake_keypress\n"
+        "    lockScreenRoot.uiVisible = true;\n"
+        "    event.accepted = true;\n"
+        "    return;\n"
+        "}\n"
+        "next();\n"
+    )
+    out = qml_patch._strip_wake_guard_block(text)
+    assert "// @trinity:suppress_wake_keypress" not in out
+    assert "next();" in out
+
+
+def test_apply_lock_tokens_removes_wake_guard_with_extra_blank_lines() -> None:
+    """A re-apply with enable=false removes the guard even when the
+    file was reformatted upstream with an extra blank line."""
+    from trinity.theme import qml_patch
+
+    text = (
+        "Keys.onPressed: event => {\n"
+        "    if (event.key === Qt.Key_Left) {\n"
+        "        userSwitcher.show();\n"
+        "    }\n"
+        '    if (!lockScreenRoot.uiVisible && event.text !== "") '
+        "{ // @trinity:suppress_wake_keypress\n"
+        "        lockScreenRoot.uiVisible = true;\n"
+        "\n"  # extra blank line
+        "        event.accepted = true;\n"
+        "        return;\n"
+        "    }\n"
+        "    passwordBox.text += event.text;\n"
+        "}\n"
+    )
+    new, present = qml_patch._apply_wake_guard(text, enable=False)
+    assert "// @trinity:suppress_wake_keypress" not in new
+    assert "passwordBox.text += event.text;" in new
+    # The downstream reapply succeeded → handler_present is True.
+    assert present is True

@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import pluggy
+import pydantic
 from pydantic import BaseModel
 
 if TYPE_CHECKING:
@@ -335,7 +336,13 @@ def validate_provider_options(
     raw = dict(source.options.model_dump())
     try:
         validated = schema_cls.model_validate(raw)
-    except Exception as exc:
+    except (pydantic.ValidationError, ValueError, TypeError) as exc:
+        # Pydantic's ValidationError is the common case (unknown key,
+        # wrong type, out-of-range value). ValueError/TypeError cover
+        # custom validators in third-party providers. Anything else
+        # (KeyError, NameError, …) indicates a bug and propagates so it
+        # shows up in the user's terminal as a real traceback rather
+        # than being silently rewritten as a "rejected options" message.
         raise ValueError(
             f"provider '{source.provider}' rejected options: {exc}"
         ) from exc

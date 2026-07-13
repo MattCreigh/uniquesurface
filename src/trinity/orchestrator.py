@@ -241,9 +241,19 @@ def _safe_probe(pm: Any, source: Any) -> str | None:
         _log.warning("probe_failed", provider=source.provider, error=str(exc))
         return None
     except Exception as exc:
-        # Third-party plugins can raise anything; contain it here.
+        # Third-party plugins can raise anything (KeyError from a typo'd
+        # key access, TypeError from a None, their own ad-hoc exceptions
+        # …). Probing must be best-effort so a misbehaving plugin can
+        # never block the daily wallpaper refresh: the hourly timer
+        # would otherwise loop on a fatal probe error. The exception
+        # class name is logged so the operator can identify the
+        # offender; a non-probe path (e.g. ``trinity apply`` without
+        # ``--if-changed``) is unaffected.
         _log.warning(
-            "probe_failed_unexpected", provider=source.provider, error=str(exc)
+            "probe_failed_unexpected",
+            provider=source.provider,
+            error_type=type(exc).__name__,
+            error=str(exc),
         )
         return None
 

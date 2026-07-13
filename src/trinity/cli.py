@@ -1,13 +1,30 @@
 """Click CLI entry point for trinity.
 
-Exit-code convention (kept deliberately small):
+Exit-code convention
+====================
+
+trinity follows the spirit of BSD ``sysexits.h`` so users and shell
+scripts can rely on stable, distinct exit codes per failure category.
+The full set of constants lives in :mod:`trinity.exit_codes`; the
+short version:
 
 - ``0`` — success.
-- ``1`` — operation failed (network error, backend failure, invalid
-  config content, health-check failure from ``doctor``).
-- ``2`` — precondition/usage problem the user must resolve first
-  (missing config, refusing to overwrite an existing file, unknown
-  provider name). Matches Click's own usage-error exit code.
+- ``1`` (``EXIT_ERROR``) — generic runtime / backend / unexpected
+  error (network failure, surface write failed, manifest write
+  failed, ``doctor`` reported a problem).
+- ``2`` (``EXIT_USAGE``) — CLI usage error (missing argument,
+  conflicting flags, etc.). Matches Click's own usage-error exit code.
+- ``65`` (``EXIT_DATAERR``) — data error: the TOML config is
+  malformed or fails schema validation, the manifest is unparseable.
+- ``66`` (``EXIT_NOINPUT``) — missing input: a referenced provider,
+  font, file, or systemd unit is not found on the system.
+- ``73`` (``EXIT_CANTCREAT``) — refusing to overwrite an existing
+  config or template file; the caller must re-run with ``--force``.
+
+Every literal ``sys.exit(N)`` in this module uses one of the named
+constants from :mod:`trinity.exit_codes`. ``CLIError`` carries a
+``status`` field that defaults to ``EXIT_ERROR`` and is propagated to
+``sys.exit`` by the top-level handler in :func:`run`.
 """
 
 from __future__ import annotations
@@ -21,6 +38,13 @@ from types import TracebackType
 import click
 
 from trinity import __version__
+from trinity.exit_codes import (
+    EXIT_CANTCREAT,
+    EXIT_DATAERR,
+    EXIT_ERROR,
+    EXIT_NOINPUT,
+    EXIT_USAGE,
+)
 from trinity.logging_setup import configure_logging, get_logger
 
 _log = get_logger(__name__)
@@ -35,7 +59,11 @@ class CLIError(RuntimeError):
     """
 
     def __init__(
-        self, message: str, *, hint: str | None = None, status: int = 1
+        self,
+        message: str,
+        *,
+        hint: str | None = None,
+        status: int = EXIT_ERROR,
     ) -> None:
         super().__init__(message)
         self.hint = hint
@@ -51,7 +79,45 @@ def _format_error(message: str, hint: str | None) -> str:
     return "\n".join(lines)
 
 
-@click.group(invoke_without_command=True)
+@click.group(
+    invoke_without_command=True,
+    epilog=(
+        "Common workflows:\n"
+        "\n"
+        "  trinity setup\n"
+        "      First-time setup (config + install + apply).\n"
+        "\n"
+        "  trinity apply\n"
+        "      Refresh the wallpaper now.\n"
+        "\n"
+        "  sudo trinity apply\n"
+        "      Same, but write to system SDDM dirs (theme fork, drop-in).\n"
+        "\n"
+        "  trinity apply --dry-run\n"
+        "      Preview the plan without writing anything.\n"
+        "\n"
+        "  trinity apply --adopt-drift\n"
+        "      Accept drifted vendor QML (after a Plasma update).\n"
+        "\n"
+        "  trinity apply --restart-dm\n"
+        "      Restart the display manager after applying (terminates\n"
+        "      the current session — opt-in only).\n"
+        "\n"
+        "  trinity restore\n"
+        "      Undo the most recent apply.\n"
+        "\n"
+        "  trinity doctor\n"
+        "      Run health checks on the install.\n"
+        "\n"
+        "  trinity status\n"
+        "      Quick overview of config + manifest + drift.\n"
+        "\n"
+        "  trinity pause / resume\n"
+        "      Temporarily stop / re-enable the hourly timer.\n"
+        "\n"
+        "See `trinity <command> --help` for details on each subcommand."
+    ),
+)
 @click.option("--version", is_flag=True, help="Print version and exit.")
 @click.option(
     "--log-level",
@@ -95,7 +161,7 @@ def _install_excepthook() -> None:
             ),
             err=True,
         )
-        sys.exit(1)
+        sys.exit(EXIT_ERROR)
 
     sys.excepthook = excepthook
 
@@ -157,7 +223,7 @@ def apply(
         raise CLIError(
             f"no config at {paths.config_file()}",
             hint="run `trinity config init` to create one",
-            status=2,
+            status=EXIT_USAGE,
         )
 
     from pydantic import ValidationError
@@ -357,7 +423,7 @@ def config_validate(config_path: Path | None) -> None:
         load_config(config_path)
     except Exception as exc:
         click.echo(f"invalid: {exc}", err=True)
-        sys.exit(1)
+        sys.exit(EXIT_DATAERR)
     click.echo("ok")
 
 
@@ -371,7 +437,7 @@ def config_init(force: bool) -> None:
     target = paths.config_file()
     if target.exists() and not force:
         click.echo(f"{target} already exists; pass --force to overwrite.")
-        sys.exit(2)
+        sys.exit(EXIT_CANTCREAT)
 
     text = """\
 [surface]
@@ -516,7 +582,7 @@ def provider_info(name: str) -> None:
                 click.echo("options:     (no schema declared — not validated)")
             return
     click.echo(f"no provider named {name!r}", err=True)
-    sys.exit(2)
+    sys.exit(EXIT_NOINPUT)
 
 
 # --- qml-update-templates ---------------------------------------------
@@ -602,7 +668,7 @@ def doctor() -> None:
         f"{'enabled' if theme_tokens_enabled else 'disabled (QML checks skipped)'}"
     )
     if not theme_tokens_enabled:
-        sys.exit(0 if ok else 1)
+        sys.exit(EXIT_ERROR if not ok else 0)
 
     from trinity.theme import drift, extract
 
@@ -632,7 +698,7 @@ def doctor() -> None:
     else:
         click.echo("[info] no stored pristine QML templates (run `trinity install`)")
 
-    sys.exit(0 if ok else 1)
+    sys.exit(0 if ok else EXIT_ERROR)
 
 
 # --- migrate ----------------------------------------------------------
@@ -660,7 +726,7 @@ def migrate_from_shell(dry_run: bool) -> None:
             f"{target} already exists; refusing to overwrite.",
             err=True,
         )
-        sys.exit(2)
+        sys.exit(EXIT_CANTCREAT)
     from trinity.config import dump_config
     from trinity.schema import (
         Behaviour,
@@ -718,6 +784,18 @@ def install(yes: bool) -> None:
             # install on a broken config — the user can run `trinity
             # config validate` separately).
             pass
+    elif not yes:
+        # No config file at all: refuse with a usage error and point the
+        # user at `setup`.  Skipped under --yes so a non-interactive
+        # install pipeline (e.g. dotfiles) can still proceed; the
+        # default theme_tokens is `true` so the extraction below is the
+        # same path either way.
+        click.echo(
+            f"no config found at {paths.config_file()}; "
+            "run `trinity setup` (or `trinity config init`) first.",
+            err=True,
+        )
+        sys.exit(EXIT_USAGE)
 
     if tokens_enabled:
         click.echo("==> Extracting pristine QML templates")
@@ -802,7 +880,7 @@ def pause() -> None:
         click.echo(msg)
     else:
         click.echo(f"pause failed: {msg}", err=True)
-        sys.exit(1)
+        sys.exit(EXIT_ERROR)
 
 
 @main.command()
@@ -815,7 +893,7 @@ def resume() -> None:
         click.echo(msg)
     else:
         click.echo(f"resume failed: {msg}", err=True)
-        sys.exit(1)
+        sys.exit(EXIT_ERROR)
 
 
 def _detect_existing_setup() -> dict[str, str]:
@@ -852,7 +930,7 @@ def run() -> None:
         sys.exit(exc.status)
     except click.exceptions.Abort:
         click.echo("aborted.", err=True)
-        sys.exit(1)
+        sys.exit(EXIT_ERROR)
     except click.ClickException as exc:
         exc.show()
         sys.exit(exc.exit_code)

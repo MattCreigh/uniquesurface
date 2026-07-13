@@ -6,6 +6,26 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.5] — 2026-07-13
+
+### Changed
+
+- **CLI exit codes follow BSD `sysexits.h`.** All `sys.exit(N)` calls in `cli.py` are now named constants in the new `trinity.exit_codes` module: `EXIT_ERROR=1`, `EXIT_USAGE=2`, `EXIT_DATAERR=65`, `EXIT_NOINPUT=66`, `EXIT_CANTCREAT=73`. `trinity install` without a config and without `--yes` now exits with `EXIT_USAGE` (was an opaque `1`); `trinity provider info <unknown>` exits with `EXIT_NOINPUT` (was `2`, ambiguous with usage errors); `trinity config init` refusing to overwrite exits with `EXIT_CANTCREAT` (was `2`).
+- **Brace-balanced wake-guard removal.** The QML patcher previously removed the inserted wake-keypress guard by matching exactly 3 lines after the marker comment — fragile against upstream reformatting. The removal now walks brace pairs to find the closing `}`, so an extra blank line or a re-ordered inner statement no longer leaves a stale guard in the file.
+
+### Added
+
+- **`trinity --help` shows common-workflow examples** in its epilog (`setup`, `apply`, `apply --dry-run`, `apply --adopt-drift`, `restore`, `doctor`, `pause`/`resume`, etc.).
+- **`TimeoutStopSec=30` is explicit in the systemd service template** (was the implicit 90s default; making it explicit documents the intent and surfaces a misbehaving D-Bus call sooner in the unit logs).
+- **`CONTRIBUTING.md` documents the dev setup, quality gates, exit-code convention, provider/backend/descriptor authoring guides, and the security model.**
+- **`.pre-commit-config.yaml`** wires up `ruff` (check + format) and `mypy` so local commits catch style and type issues before pushing.
+
+### Internal
+
+- **Test coverage rose from 79% to 84.5%.** `cli.py` 60% → 80%, `orchestrator.py` 69% → 80%, `atomic.py` 73% → 94%. Test count grew from 275 to 345 across new files `tests/test_exit_codes.py`, `tests/test_cli_coverage.py`, `tests/test_orchestrator_coverage.py`, `tests/test_main.py`, plus targeted additions to `tests/test_atomic.py`, `tests/test_cli.py`, `tests/test_qml_patch.py`, and `tests/test_systemd.py`.
+- `validate_provider_options` no longer catches a bare `Exception`; it now narrows to `(pydantic.ValidationError, ValueError, TypeError)` so real bugs (NameError, etc.) surface as tracebacks instead of being rewritten as "rejected options".
+- `_safe_probe` logs the exception class name (`error_type` field) in addition to the message, so a misbehaving third-party probe is identifiable from the journal without having to attach a debugger.
+
 ## [0.2.4] — 2026-07-13
 
 ### Fixed

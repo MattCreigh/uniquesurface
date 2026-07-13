@@ -32,6 +32,9 @@ def test_render_service_contains_trinity_bin() -> None:
     assert "NoNewPrivileges=true" in text
     assert "PrivateTmp=true" in text
     assert "TimeoutStartSec=120" in text
+    # TimeoutStopSec is explicit (not the systemd 90s default) so a
+    # hung D-Bus call surfaces in the unit logs in 30s, not 90s.
+    assert "TimeoutStopSec=30" in text
     assert "RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX" in text
 
 

@@ -61,10 +61,23 @@ class SourceOptions(_StrictModel):
     """Provider-specific options, validated against the provider schema.
 
     The provider name is the dispatch key; the actual validation happens
-    inside each provider plugin. We accept any dict here and let the
-    registry do its own validation when the provider is invoked.
+    inside each provider plugin (see ``trinity.providers.builtin.*``).
+    We deliberately use ``extra="allow"`` here because the option keys
+    are provider-specific — a Bing option set is structurally different
+    from a JSON-API option set, and a single TOML table cannot enforce
+    per-provider rules. The per-provider schema (each provider declares
+    ``trinity_provider_options_schema``) catches typos and unknown keys
+    at ``trinity apply`` time. Any third-party provider that does *not*
+    declare a schema is permissive by design.
     """
 
+    # Intentional: see the docstring above. Rejecting unknown keys here
+    # would require bundling all built-in provider schemas in a single
+    # discriminated union, which would force every third-party plugin
+    # to ship its schema as a Pydantic model referenced from core code.
+    # The current "allow here, validate at fetch time" split keeps
+    # third-party plugins plug-and-play while still catching real typos
+    # for built-ins.
     model_config = ConfigDict(extra="allow")
 
 

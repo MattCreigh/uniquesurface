@@ -85,11 +85,87 @@ def _wake_anchor_fallback() -> re.Pattern[str]:
 
 
 def _wake_guard_block_fallback() -> re.Pattern[str]:
+    """Compiled regex for the wake-guard removal fallback.
+
+    The wake-guard block is brace-balanced: an opening ``if (...) {``
+    followed by zero or more inner statements (which themselves may
+    contain braces, but in our case do not) and a closing ``}``. We
+    match the whole block by anchoring on the marker comment, then
+    walking forward through the text, counting ``{`` and ``}`` at
+    column 0 of each line, until the depth returns to the opening
+    level. This is robust to upstream reformatting that adds or
+    removes blank lines or shuffles the inner statements.
+
+    The returned ``re.Pattern`` matches a *prefix* of the block plus
+    the marker comment; the caller must scan forward from the match
+    end to consume the rest of the block. (Python ``re`` cannot match
+    a balanced-brace expression directly.)
+    """
     return re.compile(
         r"[ \t]*if \(!lockScreenRoot\.uiVisible[^\n]*"
         + re.escape(WAKE_GUARD_MARKER)
-        + r"\n(?:[^\n]*\n){3}[ \t]*\}\n"
+        + r"\n"
     )
+
+
+def _balanced_block_end(text: str, start: int) -> int:
+    """Return the index just past the closing ``}`` of a brace-balanced
+    block starting at ``start``.
+
+    ``start`` must point to the first character of the opening
+    ``if (...) {`` line. The function walks forward line by line,
+    tracking ``{``/``}`` depth (treating ``{`` and ``}`` in comments
+    conservatively as code), until the depth returns to the level
+    at ``start`` minus 1, then returns the position just past the
+    matching ``}``.
+
+    If no balanced close is found within ``text``, ``len(text)`` is
+    returned (defensive: the caller treats the rest of the file as
+    the block and a follow-up lint check rejects the result).
+    """
+    depth = 0
+    i = start
+    n = len(text)
+    seen_open = False
+    while i < n:
+        ch = text[i]
+        if ch == "{":
+            depth += 1
+            seen_open = True
+        elif ch == "}":
+            depth -= 1
+            if seen_open and depth == 0:
+                # Consume the rest of the line (newline if present).
+                j = i + 1
+                if j < n and text[j] == "\n":
+                    j += 1
+                return j
+        i += 1
+    return n
+
+
+def _strip_wake_guard_block(text: str) -> str:
+    """Remove a brace-balanced wake-guard block anchored on the marker.
+
+    Used by :func:`_apply_wake_guard` when no descriptor matches the
+    running Plasma version (CI, containerised runs) and the fallback
+    regex has to do the work. Replaces the line-count-coupled
+    `(?:[^\\n]*\\n){3}` pattern from earlier versions which broke
+    when the upstream QML gained an extra blank line.
+    """
+    fallback = _wake_guard_block_fallback()
+    m = fallback.search(text)
+    if m is None:
+        return text
+    end = _balanced_block_end(text, m.start())
+    return text[: m.start()] + text[end:]
+
+
+# ---------------------------------------------------------------------------
+# Backwards-compat alias. ``_WAKE_GUARD_BLOCK_RE`` is referenced by tests
+# and by ``remove_sentinels``; it now returns the prefix-anchor pattern
+# and the actual block-end trimming is done by ``_strip_wake_guard_block``.
+# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -454,7 +530,15 @@ def _apply_wake_guard(text: str, *, enable: bool) -> tuple[str, bool]:
             True,
         )
     if has_guard:
-        return _WAKE_GUARD_BLOCK_RE.sub("", text, count=1), True
+        # Always use the brace-balanced helper, not the descriptor's
+        # ``remove_anchor`` regex. The descriptor's pattern is the
+        # legacy line-count-coupled form (matches exactly 3 inner
+        # lines), which is fragile against upstream reformatting. The
+        # brace walker in :func:`_strip_wake_guard_block` is robust
+        # to blank lines, reordered statements, and inner brace
+        # blocks. Descriptor-driven ``remove_anchor`` is kept for
+        # back-compat in the schema but ignored at runtime.
+        return _strip_wake_guard_block(text), True
     return text, _WAKE_HANDLER_ANCHOR_RE.search(text) is not None
 
 

@@ -348,8 +348,11 @@ def test_provider_info_known_and_unknown() -> None:
     ok = runner.invoke(main, ["provider", "info", "bing"])
     assert ok.exit_code == 0
     assert "Bing" in ok.output
+    # Unknown provider: EXIT_NOINPUT (66) — distinct from CLI usage (2)
+    # so shell scripts can tell "no such provider" from "you typed the
+    # command wrong".
     missing = runner.invoke(main, ["provider", "info", "nope"])
-    assert missing.exit_code == 2
+    assert missing.exit_code == 66
 
 
 def test_migrate_from_shell_no_legacy_setup(tmp_path: Path) -> None:
@@ -377,7 +380,8 @@ def test_config_validate_reports_invalid(
     cfg_dir.mkdir(parents=True)
     (cfg_dir / "config.toml").write_text("[surface]\nbogus = 1\n")
     result = CliRunner().invoke(main, ["config", "validate"])
-    assert result.exit_code == 1
+    # EXIT_DATAERR (65) — distinct from a generic runtime error (1).
+    assert result.exit_code == 65
     assert "invalid" in result.output
 
 
@@ -388,7 +392,8 @@ def test_config_init_refuses_overwrite_without_force(
     runner = CliRunner()
     assert runner.invoke(main, ["config", "init"]).exit_code == 0
     again = runner.invoke(main, ["config", "init"])
-    assert again.exit_code == 2
+    # EXIT_CANTCREAT (73) — caller must re-run with --force.
+    assert again.exit_code == 73
     assert "already exists" in again.output
 
 

@@ -46,3 +46,6 @@ htmlcov/
 # dirs like src/trinity/systemd/templates/.
 /**/templates/*.qml
 *.debian.tar.xz
+
+# Local-only files that may be dropped in the project root.
+mesh-lan-CA.crt

@@ -34,6 +34,11 @@ StandardError=journal
 # Kill the service if it runs longer than 2 minutes (a hung HTTP download
 # or a frozen kwriteconfig6 should not block the timer indefinitely).
 TimeoutStartSec=120
+# Kill the service if it takes longer than 30s to stop cleanly (e.g. a
+# hung D-Bus call during systemctl stop). systemd's default is 90s;
+# making it explicit documents the intent and surfaces a misbehaving
+# D-Bus call sooner in the unit logs.
+TimeoutStopSec=30
 # Sandbox: restrict what the service can do even if compromised.
 # trinity needs: write to ~/.config/trinity + ~/.local/state/trinity +
 # /usr/local/share/wallpapers; network for the Bing provider; no new

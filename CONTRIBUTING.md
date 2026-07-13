@@ -1,98 +1,133 @@
 # Contributing to trinity
 
-Thank you for your interest in contributing to trinity! This document
-covers the development setup, code style, and quality gates.
+Thank you for your interest in trinity — a unified Plasma 6 surface
+manager. This guide covers the local dev setup, the quality gates, and
+the conventions new contributors need to know.
 
-## Development setup
+## Quick start
 
-trinity uses [uv](https://docs.astral.sh/uv/) for dependency management.
-
-```sh
-git clone https://github.com/MattCreigh/uniquesurface.git
-cd trinity
-uv sync --group test    # create venv + install dev + test deps
+```bash
+git clone <repo>
+cd background_manager
+uv sync --group dev --group test
+uv run pytest -q
 ```
+
+`uv` handles the Python dependency graph (Python 3.12+); the lockfile is
+the source of truth, so `--frozen` is implied for CI runs.
 
 ## Quality gates
 
-All four must pass before a PR can be merged (CI enforces them on every
-push and pull request):
+All four must pass locally before opening a PR. CI runs the same
+sequence on push/PR against Python 3.12 and 3.13.
 
-```sh
-uv run ruff check src tests          # linting
-uv run ruff format --check src tests # formatting
-uv run mypy src                      # type checking (strict mode)
-uv run pytest -q                     # tests
+```bash
+# Lint
+uv run ruff check src tests
+uv run ruff format --check src tests
+
+# Type-check
+uv run mypy src
+
+# Tests
+uv run pytest -q
 ```
 
-## Code style
+The 75% coverage floor (configured in `pyproject.toml` under
+`[tool.coverage.report]`) must remain met. New code should ship with
+its own tests; the coverage gate will fail otherwise.
 
-- **Python 3.12+** — use `from __future__ import annotations` for
-  forward-reference type hints.
-- **Type hints** on all public functions. mypy runs in strict mode
-  (`disallow_untyped_defs`, `warn_return_any`, etc.).
-- **Line length**: 88 characters (enforced by ruff).
-- **Imports**: sorted by ruff (isort-compatible). Use `from x import y as y`
-  for re-exports (mypy strict mode requires explicit re-exports).
-- **Error handling**: use `CLIError` (with `hint=`) for user-facing errors,
-  `BackendError` (with `hint=`) for backend failures. Broad `except Exception`
-  is acceptable in plugin loading and CLI fallbacks but should be commented.
-- **Subprocess calls**: always use explicit argv (no `shell=True`), always
-  pass `timeout=`, use `check=True` for writes and `check=False` for reads.
-- **File writes**: use `trinity.atomic.atomic_write_bytes` / `atomic_write_text`
-  for all config/state writes (tmp + fsync + rename).
+## Exit-code convention
 
-## Testing
+The CLI uses BSD `sysexits.h`-style codes. The named constants live in
+`trinity.exit_codes`; do not introduce new `sys.exit(N)` literals.
 
-- Tests run in isolation via `conftest.py` which redirects XDG dirs to a
-  tmp path. Never write to real user config in tests.
-- Use `respx` for HTTP mocking, `monkeypatch` for subprocess mocking.
-- Integration tests (requiring a real Plasma session) should be marked
-  `@pytest.mark.integration` and skipped when no display is available.
-- Coverage floor: 75% (enforced via `[tool.coverage.report] fail_under`
-  when running with `--cov`); target 80%+. Run
-  `uv run pytest --cov --cov-report=term-missing` to check. New code
-  should cover its error paths, not just the success path.
+| Constant | Code | Meaning |
+|---|---|---|
+| `EXIT_ERROR` | 1 | Generic runtime / backend / unexpected error |
+| `EXIT_USAGE` | 2 | CLI usage error (missing argument, conflicting flags) |
+| `EXIT_DATAERR` | 65 | Bad config (TOML parse, schema validation) |
+| `EXIT_NOINPUT` | 66 | Missing provider, font, file, unit |
+| `EXIT_CANTCREAT` | 73 | Refusing to overwrite existing file |
+
+When you need a new category, add it to `exit_codes.py` with a
+matching test in `tests/test_exit_codes.py`.
+
+## Adding a new provider
+
+Providers are pluggy plugins. The minimum surface area is three
+hooks: `trinity_provider_name`, `trinity_provider_info`,
+`trinity_provider_fetch`. For a full integration the provider should
+also expose `trinity_provider_options_schema` (a pydantic `BaseModel`
+with `model_config = ConfigDict(extra="forbid")`) and
+`trinity_provider_probe` (return a cheap change-token or `None`).
+
+Use `trinity.providers.builtin._http` for HTTP — it already does HTTPS
+enforcement, SSRF defense, size caps, and redirect handling.
+
+## Adding a new surface backend
+
+Subclass `trinity.backends.base.Backend` and implement `apply()` and
+`dry_run_plan()`. Register the new backend in
+`trinity.orchestrator.default_backends()` if it should run by default.
+
+The orchestrator catches `BackendError` per backend so a failure in
+one surface never blocks the others. Use `BackendError(hint=...)` to
+surface a remediation hint to the user.
+
+## QML descriptors
+
+Theme-token patches are data-driven via TOML descriptors in
+`src/trinity/theme/descriptors/`. Each descriptor declares:
+
+- A Plasma version range (`plasma = ">=6.0,<6.8"`)
+- One or more patches (`kind = "font_property" | "fadeout_timer" | "wake_guard"`)
+- A compiled regex `anchor.pattern` for the rewrite location
+- A literal `insert_block` (with `{indent}` placeholder) for inserts
+
+The upstream-canary workflow (`.github/workflows/upstream-canary.yml`)
+runs weekly against real KDE source to detect when a Plasma update
+moves a managed property. A new descriptor is the fix for any
+upstream rename.
+
+## Security model
+
+trinity runs as the invoking user, optionally with `sudo` for system
+paths. Treat third-party provider plugins as a supply-chain surface
+(loaded via `importlib.metadata.entry_points()`). The HTTP layer
+already:
+
+- Rejects non-HTTPS URLs
+- Resolves DNS pre-flight and blocks private/loopback/link-local
+- Caps redirects at 5
+- Caps metadata at 5 MiB, images at 50–100 MiB
+- Parses XML with `defusedxml` (no XXE / billion-laughs)
+
+New code that touches the network or the filesystem should follow
+the same posture: validate at the boundary, fail closed, and log
+with the exception class name (not the message alone) so the
+operator can identify the offender.
+
+## Commit messages
+
+Use the imperative mood in the subject line:
+
+```
+Fix adopt_drift: re-apply lock tokens after MainBlock.qml drift
+```
+
+A scope prefix is encouraged when the change is local to one module:
+
+```
+cli: unify exit codes against sysexits.h
+orchestrator: brace-balanced wake-guard removal
+```
 
 ## Pull requests
 
-- Branch from `main`; keep PRs focused on one change.
-- All CI checks (lint, format, types, tests on every supported Python)
-  must be green before merge — `main` is a protected branch.
-- Update `CHANGELOG.md` under `[Unreleased]` for user-visible changes.
-
-## Releases
-
-1. Update the version in `src/trinity/__init__.py` (the single source of
-   truth — `pyproject.toml` reads it via `[tool.hatch.version]`).
-2. Move the `[Unreleased]` CHANGELOG section under the new version.
-3. Tag `vX.Y.Z` and push the tag; build artefacts with `uv build`.
-   (The project is not published to PyPI; install from the repository.)
-
-## Architecture overview
-
-```
-CLI (cli.py)
-  → Config (config.py + schema.py)
-  → Orchestrator (orchestrator.py)
-      → Provider (providers/) fetches the image
-      → verify_image (Pillow decode + re-encode)
-      → Backends (backends/) write to each surface
-      → QML Patcher (theme/qml_patch.py) patches vendor QML
-      → Manifest (manifest.py) records every change for undo
-```
-
-Key design decisions are documented in `PLAN.md` (marked **DECIDED**).
-Do not re-litigate decided items without flagging to the maintainer.
-
-## Systemd unit hardening
-
-The generated `trinity-pull.service` includes sandboxing directives
-(`ProtectSystem`, `NoNewPrivileges`, `PrivateTmp`, `SystemCallFilter`,
-etc.). When modifying the service template, ensure any new filesystem
-paths trinity writes to are added to `ReadWritePaths`.
-
-## License
-
-By contributing, you agree that your contributions are licensed under the
-GPL-3.0-or-later license.
+- One logical change per PR.
+- The PR description should link any related issue.
+- New user-facing behavior needs a `CHANGELOG.md` entry under
+  `[Unreleased]`.
+- A reviewer's time is precious — local CI green before requesting
+  review.

@@ -1,0 +1,37 @@
+# Pre-commit hooks for trinity
+#
+# Install once with:
+#   uv run pre-commit install
+#
+# Runs on every commit. CI runs the same gates independently, but
+# catching them here saves a round-trip through the PR queue.
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.8.6
+    hooks:
+      - id: ruff
+        args: ["--fix", "--exit-non-zero-on-fix"]
+        files: '^(src|tests)/.*\.py$'
+      - id: ruff-format
+        files: '^(src|tests)/.*\.py$'
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.13.0
+    hooks:
+      - id: mypy
+        files: '^src/.*\.py$'
+        additional_dependencies: []
+        # Config comes from pyproject.toml ([tool.mypy]).
+
+  - repo: local
+    hooks:
+      - id: pytest-fast
+        name: pytest (fast subset)
+        entry: uv run pytest -q -x --no-cov -m "not integration and not canary"
+        language: system
+        pass_filenames: false
+        types_or: [python]
+        # Run only on push, not on every commit (the full suite is
+        # ~25s; running on every commit is too noisy).
+        stages: [manual]
