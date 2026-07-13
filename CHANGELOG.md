@@ -6,6 +6,22 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.4] — 2026-07-13
+
+### Fixed
+
+- **A theme-fork failure no longer aborts the whole `apply`.** The SDDM fork step ran before the surface backends with no error handling, so on machines where `/usr/share/sddm/themes` requires root (i.e. most machines), the hourly user-mode timer run would crash with `PermissionError` before the desktop and lock screens were updated. The fork is now best-effort like the backends: the failure is reported with a sudo hint and the apply continues.
+
+### Changed
+
+- **The SDDM theme fork is now idempotent.** Previously every full `apply` deleted and re-copied the entire fork (churning the manifest and wiping drift backups inside the fork). The fork now records a content digest of its vendor source (`.trinity-fork-source`) and is only rebuilt when the vendor Breeze theme actually changes; the `trinity.conf` drop-in is only rewritten when missing (self-healing).
+- **The fork and drop-in are skipped when plasmalogin is the active greeter** — SDDM is not in use there, so they were inert writes requiring root for nothing.
+- CI workflows: bumped `actions/checkout` to v7, `actions/upload-artifact` to v7, and `astral-sh/setup-uv` to v8 (silences the Node 20 deprecation warnings).
+
+### Documentation
+
+- README (surfaces table, QML patching section, LLM-briefing invariant 10), `docs/config-reference.md`, and the `verify` skill now describe the theme-fork mechanism accurately: `Login.qml` is patched in the `trinity-breeze` fork, never in the vendor theme.
+
 ## [0.2.3] — 2026-07-13
 
 ### Added

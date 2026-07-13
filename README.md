@@ -314,7 +314,7 @@ and always applies — use it to force surface rewrites.
 |---|---|---|---|
 | Desktop | `plasma-org.kde.plasma.desktop-appletsrc` (nested `[Containments][<id>][Wallpaper][org.kde.image][General] Image=`) | `kwriteconfig6` + live `qdbus6 … evaluateScript` | immediately |
 | Lock | `kscreenlockerrc` (`[Greeter]…Image=`) | `kwriteconfig6` + D-Bus reconfigure | next lock |
-| Login | `theme.conf.user` next to the Breeze theme's `theme.conf` — the sanctioned SDDM override; the vendor file is never edited. Points at the stable alias. | atomic write (root) | next greeter start (logout/boot) |
+| Login | `theme.conf.user` — the sanctioned SDDM override; the vendor file is never edited. Wallpaper-only mode writes it next to the vendor Breeze theme's `theme.conf`; with `theme_tokens` enabled it lives inside the `trinity-breeze` fork (below). Points at the stable alias. On plasmalogin systems, a drop-in at `/etc/plasmalogin.conf.d/trinity.conf` is written instead. | atomic write (root) | next greeter start (logout/boot) |
 
 ```text
 restart(display_manager) ↔ --restart-dm ∧ login_applied ∧ dm_detected ∧ (root ∨ sudo/pkexec)
@@ -327,10 +327,19 @@ privilege you get an explanation.
 ### QML patching and drift (opt-in)
 
 When `theme_tokens.enabled`, trinity patches font/lock/login tokens into
-vendor QML between sentinel comments, guarded by three rules:
+QML between sentinel comments. The two lockscreen files are patched in
+place; the SDDM `Login.qml` is **never** patched in the vendor theme —
+instead the whole Breeze theme is copied to
+`/usr/share/sddm/themes/trinity-breeze/`, the fork's copy is patched, and
+a drop-in at `/etc/sddm.conf.d/trinity.conf` (`[Theme] Current=trinity-breeze`)
+selects it, so a Plasma upgrade can't clobber the greeter edits. The fork
+is content-addressed against its vendor source: it is only re-copied when
+the vendor theme actually changes, and the drop-in is re-written only when
+missing. Disabling `theme_tokens` removes both. All patching is guarded by
+three rules:
 
 ```text
-D1.  ¬matches(vendor, pristine baseline)  →  backup + raise DriftError   (never patch drifted files)
+D1.  ¬matches(target, pristine baseline)  →  backup + raise DriftError   (never patch drifted files)
 D2.  adopt(drifted content as baseline)   ↔  explicit consent (--adopt-drift ∨ qml-update-templates)
 D3.  qmllint fails after patching         →  roll the file back to pristine (fail closed)
 ```
@@ -438,6 +447,7 @@ This section is the contract for automated changes. Read it (and
 7. **User systemd units must not use capability-dropping directives** (`ProtectClock=`, `ProtectKernelModules=`) — they fail to start under user managers on Ubuntu-24.04-based distros. There is a regression test.
 8. **Tests must be hermetic.** Always set `[surface.behaviour]` dirs to tmp paths, disable `theme_tokens` (the omitted-key auto-migration *enables* it) or stub `extract.DEFAULT_TARGETS`, and stub `LoginBackend` — it writes hardcoded system paths that are user-writable on some machines.
 9. **Provider options are strict pydantic schemas** (`extra="forbid"`), validated at config load; a new provider must implement `trinity_provider_name/info/fetch/options_schema` and should implement `trinity_provider_probe` (cheap, metadata-only; return an opaque token, or `None` if probing is impossible).
+10. **SDDM greeter QML is patched only in the `trinity-breeze` fork** (`backends/sddm_fork.py`), selected via the `/etc/sddm.conf.d/trinity.conf` drop-in — the vendor Breeze theme's `Login.qml` is never edited. The fork step is best-effort (a permission failure must not abort `apply`; desktop/lock still update) and idempotent (re-copied only when the vendor theme's content digest changes, drop-in rewritten only when missing, both skipped when plasmalogin is the greeter).
 
 **Quality gates (all must pass before any commit):**
 

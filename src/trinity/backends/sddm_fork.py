@@ -54,6 +54,7 @@ After a successful ``install``/``apply`` with theme tokens enabled:
 
 from __future__ import annotations
 
+import hashlib
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -77,6 +78,12 @@ VENDOR_LOGIN_QML = VENDOR_BREEZE_DIR / "Login.qml"
 # rewrite the Name entry so users see "Trinity Breeze" in SDDM's
 # theme picker.
 _METADATA_DESKTOP = "metadata.desktop"
+
+# Marker file inside the fork recording a digest of the vendor source
+# it was copied from. When the digest still matches, ``fork_breeze_theme``
+# skips the re-copy — a full ``apply`` must not rebuild the fork (and
+# wipe its drift backups) unless the vendor theme actually changed.
+_SOURCE_DIGEST_NAME = ".trinity-fork-source"
 
 
 @dataclass(frozen=True)
@@ -108,7 +115,11 @@ def fork_breeze_theme(
     "Trinity Breeze" so it's distinguishable in the SDDM theme picker.
 
     Returns a :class:`ForkResult`.  If the source directory does not
-    exist, returns ``created=False`` with a clear message.
+    exist, returns ``created=False`` with a clear message.  If the
+    fork already exists and the vendor source is unchanged since it
+    was made (see :data:`_SOURCE_DIGEST_NAME`), the copy is skipped —
+    ``created=False`` with an "up to date" message — so repeated
+    applies don't churn the fork or discard its drift backups.
     """
     src = source_dir or VENDOR_BREEZE_DIR
     dest = dest_dir or FORK_THEME_DIR
@@ -117,16 +128,17 @@ def fork_breeze_theme(
             created=False,
             message=(f"breeze theme not found at {src}; SDDM theme fork skipped"),
         )
-    # Remove any stale fork so a refresh is a clean copy.  This is
-    # tracked too so restore can undo it.
+    digest = _source_digest(src)
+    marker = dest / _SOURCE_DIGEST_NAME
+    if dest.is_dir() and marker.is_file():
+        if marker.read_text(encoding="utf-8").strip() == digest:
+            return ForkResult(
+                created=False,
+                message=f"fork at {dest} up to date (vendor theme unchanged)",
+            )
+    # Vendor changed (or first run / no marker): rebuild from a clean
+    # copy so no stale files from the previous vendor version linger.
     if dest.exists():
-        for child in dest.iterdir():
-            if child.is_file():
-                # Manifest-tracked delete: write empty bytes to record
-                # the deletion.  (We can't call manifest.delete() here
-                # because the manifest's restore path is file-write
-                # based.)
-                pass
         shutil.rmtree(dest)
     dest.mkdir(parents=True, exist_ok=True)
     count = 0
@@ -152,10 +164,25 @@ def fork_breeze_theme(
                     sub_data = sub.read_bytes()
                     write_tracked(manifest, sub_target, sub_data, mode=0o644)
                     count += 1
+    write_tracked(manifest, marker, digest.encode("utf-8"), mode=0o644)
     return ForkResult(
         created=True,
         message=f"forked {count} files from {src} to {dest}",
     )
+
+
+def _source_digest(src: Path) -> str:
+    """Digest of every file in the vendor theme dir (path + content).
+
+    Changes when any file is added, removed, renamed, or edited —
+    i.e. exactly when the fork needs a rebuild.
+    """
+    h = hashlib.sha256()
+    for f in sorted(p for p in src.rglob("*") if p.is_file()):
+        h.update(str(f.relative_to(src)).encode("utf-8"))
+        h.update(b"\0")
+        h.update(hashlib.sha256(f.read_bytes()).digest())
+    return h.hexdigest()
 
 
 def write_dropin(manifest: Manifest, *, dropin_path: Path | None = None) -> Path:
@@ -197,7 +224,6 @@ def remove_dropin(manifest: Manifest, *, dropin_path: Path | None = None) -> boo
     path = dropin_path or DROPIN_PATH
     if not path.is_file():
         return False
-    prev = path.read_bytes()
     path.unlink()
     manifest.append(
         op="delete",
@@ -205,7 +231,6 @@ def remove_dropin(manifest: Manifest, *, dropin_path: Path | None = None) -> boo
         prev_sha256=None,
         new_sha256=None,
     )
-    del prev
     return True
 
 

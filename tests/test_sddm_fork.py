@@ -128,21 +128,47 @@ def test_fork_returns_false_when_source_missing(
     assert "not found" in result.message
 
 
-def test_fork_refreshes_existing(
+def test_fork_skips_when_vendor_unchanged(
     fake_breeze_theme: Path,
     fake_fork_dest: tuple[Path, Path],
     tmp_path: Path,
 ) -> None:
-    """A second fork replaces the existing fork dir cleanly."""
+    """A second fork with an unchanged vendor theme is a no-op, so
+    repeated applies don't churn the fork (or wipe drift backups)."""
+    fork, _ = fake_fork_dest
+    manifest = Manifest(tmp_path / "manifest.jsonl")
+    first = sddm_fork.fork_breeze_theme(manifest)
+    assert first.created
+    # Simulate a later QML patch of the fork: the fork's content
+    # diverging from vendor must NOT trigger a rebuild — only a
+    # vendor change may.
+    (fork / "Login.qml").write_text("patched\n", encoding="utf-8")
+    second = sddm_fork.fork_breeze_theme(manifest)
+    assert not second.created
+    assert "up to date" in second.message
+    assert (fork / "Login.qml").read_text(encoding="utf-8") == "patched\n"
+
+
+def test_fork_rebuilds_when_vendor_changes(
+    fake_breeze_theme: Path,
+    fake_fork_dest: tuple[Path, Path],
+    tmp_path: Path,
+) -> None:
+    """A vendor theme change (e.g. Plasma upgrade) triggers a clean
+    re-fork; stale files from the previous fork are removed."""
     fork, _ = fake_fork_dest
     manifest = Manifest(tmp_path / "manifest.jsonl")
     sddm_fork.fork_breeze_theme(manifest)
-    # Stale file from a previous run.
     stale = fork / "stale.txt"
     stale.write_text("stale", encoding="utf-8")
-    # Re-fork.
-    sddm_fork.fork_breeze_theme(manifest)
+    (fake_breeze_theme / "Login.qml").write_text(
+        "import QtQuick\nItem { /* new upstream layout */ }\n",
+        encoding="utf-8",
+    )
+    result = sddm_fork.fork_breeze_theme(manifest)
+    assert result.created
     assert not stale.exists()
+    assert "new upstream layout" in (fork / "Login.qml").read_text(encoding="utf-8")
 
 
 def test_write_dropin_writes_conf_file(

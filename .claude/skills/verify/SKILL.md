@@ -47,10 +47,14 @@ env XDG_CONFIG_HOME="$SB/cfg" XDG_STATE_HOME="$SB/state" \
 
 The **login backend uses hardcoded absolute paths**
 (`/usr/share/sddm/themes/breeze/theme.conf.user`) and QML patching hits
-real `/usr/share` vendor files. On this machine those are
-**user-writable**, so a sandboxed full `apply` WILL rewrite the real
-SDDM config. Either monkeypatch `trinity.backends.login`'s
-`_THEME_CONF_USER_PATH`/`_THEME_CONF_PATH`, keep `theme_tokens`
+real `/usr/share` vendor files. With `theme_tokens` enabled, the SDDM
+fork also writes real system paths: `/usr/share/sddm/themes/trinity-breeze/`
+and `/etc/sddm.conf.d/trinity.conf` (see `trinity.backends.sddm_fork`;
+pytest redirects these via autouse conftest fixtures, the CLI sandbox
+does not). On this machine those are **user-writable**, so a sandboxed
+full `apply` WILL rewrite the real SDDM config. Either monkeypatch
+`trinity.backends.login`'s `_THEME_CONF_USER_PATH`/`_THEME_CONF_PATH`
+(and `sddm_fork`'s `FORK_THEME_DIR`/`DROPIN_PATH`), keep `theme_tokens`
 disabled (the config above), or restore afterwards with:
 
 ```

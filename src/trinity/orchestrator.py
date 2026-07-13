@@ -508,14 +508,30 @@ def apply_to_surfaces(
         _restore_shared_owner(state_file)
 
     if expanded.surface.theme_tokens.enabled:
+        from trinity.backends import login as login_backend
         from trinity.backends import sddm_fork
 
-        if not dry_run:
-            fork_res = sddm_fork.fork_breeze_theme(manifest)
-            if fork_res.created:
+        if login_backend.is_plasmalogin_active():
+            # plasmalogin replaces SDDM as the greeter; the fork and
+            # its drop-in would be inert (and need root for nothing).
+            plan.append("sddm theme fork: skipped (plasmalogin is the active greeter)")
+        elif not dry_run:
+            # Best-effort like the surface backends below: a fork
+            # failure (typically permissions) must not abort the whole
+            # apply — desktop/lock still need their update.
+            try:
+                fork_res = sddm_fork.fork_breeze_theme(manifest)
                 plan.append(f"sddm theme fork: {fork_res.message}")
-                dropin_written = sddm_fork.write_dropin(manifest)
-                plan.append(f"sddm configuration: wrote drop-in {dropin_written}")
+                if sddm_fork.FORK_THEME_DIR.is_dir() and not sddm_fork.is_active():
+                    dropin_written = sddm_fork.write_dropin(manifest)
+                    plan.append(f"sddm configuration: wrote drop-in {dropin_written}")
+            except OSError as exc:
+                plan.append(f"sddm theme fork FAILED: {exc}")
+                plan.append(
+                    "  hint: the SDDM theme directory requires root. "
+                    "Re-run with sudo, e.g.  sudo trinity apply"
+                )
+                _log.warning("sddm_fork_failed", error=str(exc))
         else:
             if sddm_fork.VENDOR_BREEZE_DIR.is_dir():
                 plan.append("sddm theme fork: dry-run (simulate copying Breeze theme)")
