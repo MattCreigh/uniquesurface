@@ -39,26 +39,28 @@ jobs:
       - name: Fetch upstream QML files
         run: |
           mkdir -p canary/upstream
-          # Breeze SDDM theme — Login.qml lives in the breeze theme.
-          # The SDDM themes ship in the `sddm` upstream repo's
-          # data/themes/ directory; we pin the breeze subdirectory.
-          # KDE invent: invent.kde.org/plasma/plasma-workspace.
-          # raw URLs use the /-/raw/<branch>/<path> pattern.
-          curl -fsSL \
+          # All three files trinity patches ship in the
+          # `plasma/plasma-desktop` repo (verified via
+          # `dpkg -S` on the installed files):
+          #   sddm-theme/Login.qml                     → /usr/share/sddm/themes/breeze/Login.qml
+          #   desktoppackage/contents/lockscreen/*.qml → /usr/share/plasma/shells/org.kde.plasma.desktop/contents/lockscreen/
+          # Fetched via the GitLab API raw-file endpoint (path is
+          # URL-encoded, slashes as %2F).
+          base="https://invent.kde.org/api/v4/projects/plasma%2Fplasma-desktop/repository/files"
+
+          curl -fsSL --retry 3 \
             -o canary/upstream/sddm_login.qml \
-            "https://invent.kde.org/api/v4/projects/plasma%2Fsddm-theme-breeze/repository/files/Login.qml/raw?ref=master" \
+            "$base/sddm-theme%2FLogin.qml/raw?ref=master" \
             || echo "fetch-failed: sddm_login" >&2
 
-          # Plasma lockscreen QML — lives in plasma-workspace's
-          # lookandfeel package source.
-          curl -fsSL \
+          curl -fsSL --retry 3 \
             -o canary/upstream/plasma_lockscreen_mainblock.qml \
-            "https://invent.kde.org/api/v4/projects/plasma%2Fplasma-workspace/repository/files/lookandfeel%2Forg.kde.breeze.desktop%2Fcontents%2Flockscreen%2FMainBlock.qml/raw?ref=master" \
+            "$base/desktoppackage%2Fcontents%2Flockscreen%2FMainBlock.qml/raw?ref=master" \
             || echo "fetch-failed: plasma_lockscreen_mainblock" >&2
 
-          curl -fsSL \
+          curl -fsSL --retry 3 \
             -o canary/upstream/plasma_lockscreen_ui.qml \
-            "https://invent.kde.org/api/v4/projects/plasma%2Fplasma-workspace/repository/files/lookandfeel%2Forg.kde.breeze.desktop%2Fcontents%2Flockscreen%2FLockScreenUi.qml/raw?ref=master" \
+            "$base/desktoppackage%2Fcontents%2Flockscreen%2FLockScreenUi.qml/raw?ref=master" \
             || echo "fetch-failed: plasma_lockscreen_ui" >&2
 
           ls -l canary/upstream/ || true
