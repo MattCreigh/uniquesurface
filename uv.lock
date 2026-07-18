@@ -711,12 +711,12 @@ requires-dist = [
     { name = "click", specifier = ">=8.1,<9" },
     { name = "defusedxml", specifier = ">=0.7,<1" },
     { name = "httpx", specifier = ">=0.27,<1" },
-    { name = "packaging", specifier = ">=24,<26" },
-    { name = "pillow", specifier = ">=10.3,<12" },
+    { name = "packaging", specifier = ">=24,<27" },
+    { name = "pillow", specifier = ">=10.3,<13" },
     { name = "platformdirs", specifier = ">=4.2,<5" },
     { name = "pluggy", specifier = ">=1.5,<2" },
     { name = "pydantic", specifier = ">=2.6,<3" },
-    { name = "structlog", specifier = ">=24.1,<26" },
+    { name = "structlog", specifier = ">=24.1,<27" },
 ]
 
 [package.metadata.requires-dev]

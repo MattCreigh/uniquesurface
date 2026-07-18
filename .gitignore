@@ -28,6 +28,9 @@ htmlcov/
 # uv
 .venv/
 
+# nix build output symlink
+/result
+
 # Environment
 .env
 .env.local

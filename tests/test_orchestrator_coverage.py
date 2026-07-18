@@ -593,6 +593,30 @@ def test_apply_with_if_changed_skips_when_token_matches(
     assert "source unchanged" in "\n".join(plan)
 
 
+def _stub_fetched_image(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stub the provider fetch with a tiny in-memory PNG.
+
+    The apply pipeline fetches even on a dry run; tests that exercise
+    the pipeline (not the provider) must never reach the real Bing
+    API — they only passed with network access and fail in a hermetic
+    sandbox (nix build, offline dev box).
+    """
+    import trinity.orchestrator as orch_mod
+    from trinity.providers import FetchedImage
+
+    fake_png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
+    monkeypatch.setattr(
+        orch_mod,
+        "fetch_wallpaper",
+        lambda *_a, **_kw: FetchedImage(
+            data=fake_png,
+            content_type="image/png",
+            suggested_extension=".png",
+        ),
+    )
+    monkeypatch.setattr(orch_mod, "verify_image", lambda _data: fake_png)
+
+
 def test_apply_with_theme_tokens_disabled_warns_when_values_set(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -600,6 +624,7 @@ def test_apply_with_theme_tokens_disabled_warns_when_values_set(
     theme_tokens.enabled=false emits a warning in the plan."""
     from trinity.schema import ThemeTokens
 
+    _stub_fetched_image(monkeypatch)
     cfg = Config(
         surface=Surface(
             source=Source(provider="bing", options=SourceOptions()),
@@ -650,6 +675,7 @@ def test_apply_dry_run_with_theme_tokens_enabled_reports_patch_plan(
         [("plasma_lockscreen_ui", fake_vendor)],
     )
 
+    _stub_fetched_image(monkeypatch)
     cfg = Config(
         surface=Surface(
             source=Source(provider="bing", options=SourceOptions()),
@@ -740,6 +766,7 @@ def test_apply_dry_run_with_unknown_plasma_version(
 
     from trinity.schema import ThemeTokens
 
+    _stub_fetched_image(monkeypatch)
     cfg = Config(
         surface=Surface(
             source=Source(provider="bing", options=SourceOptions()),

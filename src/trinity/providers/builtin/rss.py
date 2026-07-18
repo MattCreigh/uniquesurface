@@ -58,9 +58,7 @@ _IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp")
 # Descriptive User-Agent per RFC 9309 §2.2.1 etiquette: feed operators
 # can identify (and rate-limit or contact) the client. Callers can
 # override it via the ``headers`` option.
-_USER_AGENT = (
-    f"trinity-wallpaper/{__version__} (+https://github.com/MattCreigh/trinity_background_manager)"
-)
+_USER_AGENT = f"trinity-wallpaper/{__version__} (+https://github.com/MattCreigh/trinity_background_manager)"
 
 
 class RssOptions(BaseModel):

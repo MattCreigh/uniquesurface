@@ -118,6 +118,13 @@ uv tool install git+https://github.com/MattCreigh/trinity_background_manager.git
 
 This installs the `trinity` console script on your PATH.
 
+With [Nix](https://nixos.org/) (flakes), no install step is needed:
+
+```sh
+nix run github:MattCreigh/trinity_background_manager -- --help
+nix profile install github:MattCreigh/trinity_background_manager
+```
+
 ### First-time setup
 
 The easiest path is the all-in-one `trinity setup` command, which chains
@@ -485,6 +492,12 @@ uv run ruff check src tests
 uv run ruff format --check src tests
 uv run mypy src
 ```
+
+With Nix, `nix develop` opens a shell with `python` and `uv`, and
+`nix build` (or `nix flake check`) builds the package hermetically,
+running the whole pytest suite in the sandbox — no network, no
+writable system paths — which is also the strictest test-isolation
+check available.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the full quality gates and
 PR process.

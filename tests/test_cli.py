@@ -480,14 +480,23 @@ def test_run_wrapper_installs_excepthook_and_renders_clierror(
 
 def test_trinity_version_via_run(tmp_path: Path) -> None:
     """`trinity --version` works via the run() entry point wrapper."""
+    import os
     import subprocess
     import sys
 
+    # A stripped environment proves --version needs no session state,
+    # but the interpreter's import path is not what's under test:
+    # sandboxed builds (nix pytestCheckHook) expose the package via
+    # PYTHONPATH rather than site-packages, so that one variable must
+    # survive.
+    env = {"PATH": "/usr/bin:/bin"}
+    if "PYTHONPATH" in os.environ:
+        env["PYTHONPATH"] = os.environ["PYTHONPATH"]
     proc = subprocess.run(
         [sys.executable, "-m", "trinity", "--version"],
         capture_output=True,
         text=True,
-        env={"PATH": "/usr/bin:/bin"},
+        env=env,
     )
     assert proc.returncode == 0
     assert "trinity" in proc.stdout

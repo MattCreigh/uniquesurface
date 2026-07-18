@@ -23,12 +23,12 @@ classifiers = [
 dependencies = [
   "pydantic>=2.6,<3",
   "httpx>=0.27,<1",
-  "Pillow>=10.3,<12",
+  "Pillow>=10.3,<13",
   "platformdirs>=4.2,<5",
-  "structlog>=24.1,<26",
+  "structlog>=24.1,<27",
   "pluggy>=1.5,<2",
   "click>=8.1,<9",
-  "packaging>=24,<26",  # PEP 440 / version range parsing for QML descriptors
+  "packaging>=24,<27",  # PEP 440 / version range parsing for QML descriptors
   "defusedxml>=0.7,<1",  # hardened XML parsing for the rss provider (XXE/billion-laughs)
 ]
 
