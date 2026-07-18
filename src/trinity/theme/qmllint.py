@@ -32,6 +32,15 @@ The helper does not auto-install — it just records availability
 once, so the user can install the package if they want stricter
 validation.
 
+PATH presence is not enough: on Debian-family systems the bare
+``qmllint`` name can be a qtchooser shim that fails on *every*
+invocation when only Qt 6 is installed (``could not exec
+'/usr/lib/qt5/bin/qmllint'``).  A fail-closed gate fed by such a
+shim would read "every patch is broken" and revert all patches, so
+each candidate is probed with ``--version`` and only a binary that
+actually runs is used.  The unambiguous Qt 6 name ``qmllint6`` is
+preferred — the patched QML is Plasma 6 / Qt 6.
+
 Timeout
 =======
 
@@ -58,34 +67,66 @@ _TIMEOUT_SECONDS = 5.0
 # the literal ``False`` is the "not yet searched" sentinel.
 _qmllint_path: str | None | bool = False  # sentinel: not yet searched
 
+# Most specific first: ``qmllint6`` is the unambiguous Qt 6 name on
+# Debian-family systems, where bare ``qmllint`` may be a Qt 5
+# qtchooser shim (see module docstring).
+_QMLLINT_CANDIDATES = ("qmllint6", "qmllint")
+
+
+def _locate_working_qmllint() -> str | None:
+    """Find the first candidate binary that both exists and runs.
+
+    Probes with ``--version``: a qtchooser shim whose Qt 5 target is
+    not installed exits non-zero on any invocation, and trusting it
+    would make the fail-closed lint gate revert every patch.
+    """
+    for name in _QMLLINT_CANDIDATES:
+        path = shutil.which(name)
+        if path is None:
+            continue
+        try:
+            proc = subprocess.run(
+                [path, "--version"],
+                timeout=_TIMEOUT_SECONDS,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if proc.returncode == 0:
+            return path
+        _log.info(
+            "qmllint_probe_failed",
+            path=path,
+            stderr=proc.stderr.strip(),
+        )
+    _log.info(
+        "qmllint_not_found",
+        hint=(
+            "Install qml6-qttools (Debian/Neon) or "
+            "qt6-qtdeclarative-devel (Fedora) or "
+            "qt6-declarative (Arch) to enable "
+            "post-patch validation."
+        ),
+    )
+    return None
+
 
 def qmllint_available() -> str | None:
-    """Return the absolute path to ``qmllint`` if available, else ``None``.
+    """Return the absolute path to a *working* ``qmllint``, else ``None``.
 
-    Cached per process; the first lookup shells out to ``which`` and
-    records the result.  A missing binary is a normal state (a fresh
-    container, a CI runner) — the helper logs once and returns
-    ``None`` on subsequent calls.
+    Cached per process; the first lookup searches PATH and probes the
+    result (see :func:`_locate_working_qmllint`).  A missing binary is
+    a normal state (a fresh container, a CI runner) — the helper logs
+    once and returns ``None`` on subsequent calls.
     """
     global _qmllint_path
     if _qmllint_path is False:
-        path = shutil.which("qmllint")
-        if path is None:
-            _log.info(
-                "qmllint_not_found",
-                hint=(
-                    "Install qml6-qttools (Debian/Neon) or "
-                    "qt6-qtdeclarative-devel (Fedora) or "
-                    "qt6-declarative (Arch) to enable "
-                    "post-patch validation."
-                ),
-            )
-            _qmllint_path = None
-        else:
-            _qmllint_path = path
+        _qmllint_path = _locate_working_qmllint()
     # After the first lookup, _qmllint_path is str | None; the False
-    # sentinel only survives if which() somehow returns it (it
-    # doesn't), but mypy doesn't know that, so narrow explicitly.
+    # sentinel never survives _locate_working_qmllint, but mypy doesn't
+    # know that, so narrow explicitly.
     return _qmllint_path if isinstance(_qmllint_path, str) else None
 
 

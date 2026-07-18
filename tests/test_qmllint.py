@@ -24,20 +24,82 @@ def _reset_qmllint_cache(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(qmllint, "_qmllint_path", False)
 
 
+def _probe_ok(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make the ``--version`` availability probe succeed for any binary."""
+
+    real_run = subprocess.run
+
+    def fake_run(argv, **kw):  # type: ignore[no-untyped-def]
+        if isinstance(argv, list) and "--version" in argv:
+            return subprocess.CompletedProcess(
+                args=argv, returncode=0, stdout="qmllint 6.7.0", stderr=""
+            )
+        return real_run(argv, **kw)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+
 def test_qmllint_available_returns_path_when_installed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """If ``shutil.which("qmllint")`` returns a path, we surface it."""
-    monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/qmllint")
-    assert qmllint_available() == "/usr/bin/qmllint"
+    """A binary on PATH that passes the ``--version`` probe is surfaced."""
+    monkeypatch.setattr(shutil, "which", lambda name: f"/usr/bin/{name}")
+    _probe_ok(monkeypatch)
+    assert qmllint_available() == "/usr/bin/qmllint6"
 
 
 def test_qmllint_available_returns_none_when_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """If ``shutil.which("qmllint")`` returns None, we surface None."""
+    """If ``shutil.which`` finds no candidate, we surface None."""
     monkeypatch.setattr(shutil, "which", lambda name: None)
     assert qmllint_available() is None
+
+
+def test_qmllint_available_rejects_broken_qtchooser_shim(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A shim that exists on PATH but cannot exec is treated as absent.
+
+    Debian's qtchooser ships ``/usr/bin/qmllint`` even when the Qt 5
+    tools it dispatches to are not installed; every invocation then
+    fails with "could not exec '/usr/lib/qt5/bin/qmllint'".  Trusting
+    it would make the fail-closed lint gate revert every patch.
+    """
+    monkeypatch.setattr(
+        shutil, "which", lambda name: "/usr/bin/qmllint" if name == "qmllint" else None
+    )
+
+    def fake_run(argv, **kw):  # type: ignore[no-untyped-def]
+        return subprocess.CompletedProcess(
+            args=argv,
+            returncode=1,
+            stdout="",
+            stderr="qmllint: could not exec '/usr/lib/qt5/bin/qmllint'",
+        )
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    assert qmllint_available() is None
+
+
+def test_qmllint_available_prefers_qt6_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``qmllint6`` wins over bare ``qmllint`` when both are present."""
+    monkeypatch.setattr(shutil, "which", lambda name: f"/usr/bin/{name}")
+    _probe_ok(monkeypatch)
+    assert qmllint_available() == "/usr/bin/qmllint6"
+
+
+def test_qmllint_available_falls_back_to_bare_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without ``qmllint6``, a working bare ``qmllint`` is used."""
+    monkeypatch.setattr(
+        shutil, "which", lambda name: "/usr/bin/qmllint" if name == "qmllint" else None
+    )
+    _probe_ok(monkeypatch)
+    assert qmllint_available() == "/usr/bin/qmllint"
 
 
 def test_qmllint_available_caches_its_result(
@@ -48,13 +110,14 @@ def test_qmllint_available_caches_its_result(
 
     def fake_which(name: str) -> str | None:
         calls.append(name)
-        return "/usr/bin/qmllint"
+        return f"/usr/bin/{name}"
 
     monkeypatch.setattr(shutil, "which", fake_which)
+    _probe_ok(monkeypatch)
     qmllint_available()
     qmllint_available()
     qmllint_available()
-    assert calls == ["qmllint"]
+    assert calls == ["qmllint6"]
 
 
 def test_lint_file_returns_ok_when_linter_missing(
@@ -106,6 +169,10 @@ def test_lint_file_fails_on_lint_error(
 
     def fake_run(argv, **kw):  # type: ignore[no-untyped-def]
         if argv and isinstance(argv, list) and argv[0] == "/usr/bin/qmllint":
+            if "--version" in argv:  # availability probe must succeed
+                return subprocess.CompletedProcess(
+                    args=argv, returncode=0, stdout="qmllint 6.7.0", stderr=""
+                )
             return subprocess.CompletedProcess(
                 args=argv,
                 returncode=1,
@@ -134,6 +201,10 @@ def test_lint_file_marks_timeout(
     monkeypatch.setattr(shutil, "which", fake_which)
 
     def fake_run(argv, **kw):  # type: ignore[no-untyped-def]
+        if isinstance(argv, list) and "--version" in argv:  # probe succeeds
+            return subprocess.CompletedProcess(
+                args=argv, returncode=0, stdout="qmllint 6.7.0", stderr=""
+            )
         raise subprocess.TimeoutExpired(cmd=argv, timeout=kw.get("timeout", 5.0))
 
     monkeypatch.setattr(subprocess, "run", fake_run)
@@ -155,6 +226,10 @@ def test_lint_file_marks_oserror(
     monkeypatch.setattr(shutil, "which", fake_which)
 
     def fake_run(argv, **kw):  # type: ignore[no-untyped-def]
+        if isinstance(argv, list) and "--version" in argv:  # probe succeeds
+            return subprocess.CompletedProcess(
+                args=argv, returncode=0, stdout="qmllint 6.7.0", stderr=""
+            )
         raise OSError("permission denied")
 
     monkeypatch.setattr(subprocess, "run", fake_run)

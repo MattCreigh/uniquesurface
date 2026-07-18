@@ -370,22 +370,30 @@ def apply_to_surfaces(
     expanded = expand_behaviour_paths(config)
     user_dir = Path(expanded.surface.behaviour.user_dir).expanduser()
     shared_dir = Path(expanded.surface.behaviour.shared_dir)
-    user_dir.mkdir(parents=True, exist_ok=True)
-    shared_dir.mkdir(parents=True, exist_ok=True)
+    # A dry run must leave the filesystem untouched — including these
+    # mkdirs: shared_dir is a system path (default /usr/local/share/
+    # wallpapers) that an unprivileged planning run may not be able to
+    # create.  The writability pre-flight moves with them: it exists to
+    # fail *real* applies early (before the image download), and would
+    # spuriously abort a dry run on hosts where the directory does not
+    # exist yet.
+    if not dry_run:
+        user_dir.mkdir(parents=True, exist_ok=True)
+        shared_dir.mkdir(parents=True, exist_ok=True)
 
-    # Pre-flight: if the shared directory is not writable, the shared
-    # wallpaper copy will fail after we have already downloaded the
-    # image. Surface the problem early with a clear, actionable error.
-    if not os.access(shared_dir, os.W_OK):
-        raise BackendError(
-            f"shared wallpaper directory {shared_dir} is not writable",
-            hint=(
-                "the directory must be writable by the user running trinity. "
-                "If you previously ran with sudo, fix ownership with:\n"
-                f"  sudo chown -R $USER:$USER {shared_dir}\n"
-                "Or change surface.behaviour.shared_dir to a user-writable path."
-            ),
-        )
+        # Pre-flight: if the shared directory is not writable, the shared
+        # wallpaper copy will fail after we have already downloaded the
+        # image. Surface the problem early with a clear, actionable error.
+        if not os.access(shared_dir, os.W_OK):
+            raise BackendError(
+                f"shared wallpaper directory {shared_dir} is not writable",
+                hint=(
+                    "the directory must be writable by the user running trinity. "
+                    "If you previously ran with sudo, fix ownership with:\n"
+                    f"  sudo chown -R $USER:$USER {shared_dir}\n"
+                    "Or change surface.behaviour.shared_dir to a user-writable path."
+                ),
+            )
 
     pm = make_plugin_manager()
     state_file = user_dir / refresh_state.STATE_FILENAME
