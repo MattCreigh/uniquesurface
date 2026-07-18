@@ -160,9 +160,21 @@ def qdbus_call(
     if dry_run:
         return argv
     _log.info("qdbus_call", argv=argv)
-    proc = subprocess.run(
-        argv, check=False, capture_output=True, text=True, timeout=_DEFAULT_TIMEOUT
-    )
+    try:
+        proc = subprocess.run(
+            argv, check=False, capture_output=True, text=True, timeout=_DEFAULT_TIMEOUT
+        )
+    except subprocess.TimeoutExpired:
+        # Best-effort contract: a hung qdbus6 must not abort the apply
+        # (the config files are already written).
+        _log.warning(
+            "qdbus_call_timeout",
+            service=service,
+            path=path,
+            method=method,
+            timeout=_DEFAULT_TIMEOUT,
+        )
+        return argv
     if proc.returncode != 0:
         stderr = (proc.stderr or "").strip()
         if "does not exist" in stderr or "not found" in stderr.lower():

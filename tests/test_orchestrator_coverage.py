@@ -47,6 +47,23 @@ from trinity.schema import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _stub_live_dbus(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stub the live D-Bus applies for every test in this module.
+
+    Several tests here run ``apply_to_surfaces(dry_run=False)``, whose
+    desktop/lock backends end with live ``qdbus6`` calls. Those must
+    never reach the developer's running Plasma session (conftest also
+    poisons the bus address as a backstop, but stubbing here avoids
+    spawning doomed subprocesses at all).
+    """
+    from trinity.backends import _kconfig
+
+    monkeypatch.setattr(_kconfig, "evaluate_wallpaper_script", lambda **kw: [])
+    monkeypatch.setattr(_kconfig, "reload_lockscreen_config", lambda **kw: [])
+    monkeypatch.setattr(_kconfig, "qdbus_call", lambda **kw: [])
+
+
 def _config(tmp_path: Path, *, theme_tokens: bool = True) -> Config:
     return Config(
         surface=Surface(
@@ -735,7 +752,7 @@ def test_apply_calls_manifest_compact_on_success(
     assert seen, "manifest.compact was not called on a successful apply"
 
 
-def test_apply_dry_run_with_unknown_plasma_version(
+def test_apply_with_unknown_plasma_version(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """When Plasma version is unknown, theme-token patching is skipped

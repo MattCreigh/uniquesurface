@@ -23,6 +23,7 @@ versions.
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 from trinity import paths as _paths
@@ -81,7 +82,11 @@ class LockBackend:
                 key=_IMAGE_KEY,
                 value=uri,
             )
-        except (_kconfig.KConfigToolMissing, FileNotFoundError, OSError) as exc:
+        except (
+            _kconfig.KConfigToolMissing,
+            subprocess.SubprocessError,
+            OSError,
+        ) as exc:
             raise BackendError(
                 f"failed to update lock-screen config: {exc}",
                 hint=(

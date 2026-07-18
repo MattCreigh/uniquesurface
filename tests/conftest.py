@@ -28,6 +28,23 @@ def _isolate_xdg_env(tmp_path, monkeypatch):
     yield
 
 
+@pytest.fixture(autouse=True)
+def _isolate_dbus(tmp_path, monkeypatch):
+    """Point both D-Bus bus addresses at a socket that does not exist.
+
+    XDG redirection sandboxes the filesystem but not the *session bus*:
+    an apply test that forgets to stub the live D-Bus helpers shells out
+    to ``qdbus6`` against the developer's real bus — a leaked
+    ``evaluateScript`` once live-applied a tmp_path wallpaper to the
+    real Plasma desktop and persisted it into the real appletsrc. With
+    an unreachable address such a call fails ``qdbus_call``'s soft-fail
+    path instead of reaching a real service.
+    """
+    bogus = f"unix:path={tmp_path}/no-such-dbus-socket"
+    monkeypatch.setenv("DBUS_SESSION_BUS_ADDRESS", bogus)
+    monkeypatch.setenv("DBUS_SYSTEM_BUS_ADDRESS", bogus)
+
+
 @pytest.fixture
 def home_dir() -> Path:
     """Return the per-test HOME directory created by the autouse fixture."""

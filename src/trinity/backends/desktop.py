@@ -25,6 +25,7 @@ settings UI uses — the swap is atomic and invisible to the user.
 from __future__ import annotations
 
 import re
+import subprocess
 from pathlib import Path
 
 from trinity import paths as _paths
@@ -122,7 +123,11 @@ class DesktopBackend:
                     key=_DESKTOP_KEY,
                     value=uri,
                 )
-        except (_kconfig.KConfigToolMissing, FileNotFoundError, OSError) as exc:
+        except (
+            _kconfig.KConfigToolMissing,
+            subprocess.SubprocessError,
+            OSError,
+        ) as exc:
             raise BackendError(
                 f"failed to update Plasma desktop config: {exc}",
                 hint=(
