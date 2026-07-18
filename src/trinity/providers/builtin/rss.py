@@ -59,7 +59,7 @@ _IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".webp")
 # can identify (and rate-limit or contact) the client. Callers can
 # override it via the ``headers`` option.
 _USER_AGENT = (
-    f"trinity-wallpaper/{__version__} (+https://github.com/MattCreigh/uniquesurface)"
+    f"trinity-wallpaper/{__version__} (+https://github.com/MattCreigh/trinity_background_manager)"
 )
 
 

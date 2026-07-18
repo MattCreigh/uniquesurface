@@ -5,8 +5,8 @@
   [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
   [![KDE Plasma 6](https://img.shields.io/badge/KDE-Plasma%206-1d99f3.svg?logo=kde)](https://kde.org/plasma-desktop/)
   [![License: GPL v3](https://img.shields.io/badge/License-GPL%20v3-blue.svg)](LICENSE)
-  [![CI](https://github.com/MattCreigh/uniquesurface/actions/workflows/ci.yml/badge.svg)](https://github.com/MattCreigh/uniquesurface/actions/workflows/ci.yml)
-  [![Upstream Canary](https://github.com/MattCreigh/uniquesurface/actions/workflows/upstream-canary.yml/badge.svg)](https://github.com/MattCreigh/uniquesurface/actions/workflows/upstream-canary.yml)
+  [![CI](https://github.com/MattCreigh/trinity_background_manager/actions/workflows/ci.yml/badge.svg)](https://github.com/MattCreigh/trinity_background_manager/actions/workflows/ci.yml)
+  [![Upstream Canary](https://github.com/MattCreigh/trinity_background_manager/actions/workflows/upstream-canary.yml/badge.svg)](https://github.com/MattCreigh/trinity_background_manager/actions/workflows/upstream-canary.yml)
 
 </div>
 
@@ -113,7 +113,7 @@ Module-level responsibilities are tabulated in [Repository layout](#-repository-
 uv tool install .
 
 # …or directly from GitHub
-uv tool install git+https://github.com/MattCreigh/uniquesurface.git
+uv tool install git+https://github.com/MattCreigh/trinity_background_manager.git
 ```
 
 This installs the `trinity` console script on your PATH.
@@ -477,8 +477,8 @@ documentation, not decoration.
 ## 🧪 Development
 
 ```sh
-git clone https://github.com/MattCreigh/uniquesurface.git
-cd uniquesurface
+git clone https://github.com/MattCreigh/trinity_background_manager.git
+cd trinity_background_manager
 uv sync --group test   # create venv + install dev & test deps
 uv run pytest -q       # run the test suite
 uv run ruff check src tests
