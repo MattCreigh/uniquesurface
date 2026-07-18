@@ -6,6 +6,26 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.6] — 2026-07-18
+
+### Fixed
+
+- **`apply --dry-run` no longer touches the filesystem.** The pipeline created `user_dir` and `shared_dir` (default `/usr/local/share/wallpapers`) before reaching the dry-run branch — a real mutation on a planning run, and the cause of the CI failure on v0.2.5 (`PermissionError` on GitHub runners, where `/usr/local` is not writable). The mkdirs and the shared-dir writability pre-flight now run only on real applies.
+- **The qmllint gate no longer trusts a broken qtchooser shim.** `qmllint_available()` accepted any `qmllint` on PATH; on Debian-family systems that name can be a Qt 5 qtchooser shim that fails *every* invocation when only Qt 6 is installed (`could not exec '/usr/lib/qt5/bin/qmllint'`), so the fail-closed gate silently reverted every QML patch — font tokens never survived an `apply` on such hosts. Candidates (`qmllint6` first, then `qmllint`) are now probed with `--version` and only a binary that actually runs is used.
+
+### Changed
+
+- **Repository renamed** from `MattCreigh/uniquesurface` to `MattCreigh/trinity_background_manager`; project URLs, README badges, and the rss provider User-Agent updated (GitHub redirects the old name).
+- **Dependency upper bounds widened** — `Pillow<13`, `structlog<27`, `packaging<27` — validated against Pillow 12.3, structlog 26.1, and packaging 26.2 on Python 3.14 by the new hermetic Nix build's test run.
+
+### Added
+
+- **Nix flake.** `nix build` / `nix run` build and run trinity (hatchling backend, dependencies from nixpkgs) with the full pytest suite executed in the sandboxed check phase; `nix develop` provides a `python` + `uv` shell; `nix flake check` wires the package as a check. README documents the entry points.
+
+### Internal
+
+- **Test isolation:** three orchestrator tests configured the `bing` provider without stubbing the fetch and silently hit the live Bing API on every CI/dev run (exposed by the no-network Nix sandbox); they now stub `fetch_wallpaper`/`verify_image`. The `python -m trinity --version` subprocess test preserves `PYTHONPATH` so it works where the package is exposed via env rather than site-packages. New regression tests cover the broken-shim and qt6-name-preference qmllint behaviour.
+
 ## [0.2.5] — 2026-07-13
 
 ### Changed
