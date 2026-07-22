@@ -93,6 +93,26 @@ WantedBy=timers.target
 """
 
 
+# Optional wake-enabled timer template.  Used when ``trinity install
+# --wake-network`` is passed.  ``WakeSystem=true`` tells systemd to
+# configure an RTC wakealarm so the laptop wakes from s2idle/S0ix
+# around the next trigger.  This is hardware-dependent and opt-in.
+_WAKE_TIMER_TEMPLATE = """\
+[Unit]
+Description=trinity — hourly POTD refresh (skips when unchanged, wakes system)
+
+[Timer]
+OnCalendar=hourly
+RandomizedDelaySec=10min
+Persistent=true
+WakeSystem=true
+Unit=trinity-pull.service
+
+[Install]
+WantedBy=timers.target
+"""
+
+
 class TrinityBinaryNotFound(RuntimeError):
     """Raised when the ``trinity`` console script cannot be located.
 
@@ -115,15 +135,23 @@ def render_timer() -> str:
     return _TIMER_TEMPLATE
 
 
+def render_wake_timer() -> str:
+    """Render the wake-enabled timer template (WakeSystem=true)."""
+    return _WAKE_TIMER_TEMPLATE
+
+
 def install(
     *,
     unit_dir: Path | None = None,
     trinity_bin: str | None = None,
     working_dir: str | None = None,
+    wake_system: bool = False,
 ) -> tuple[Path, Path]:
     """Write ``.service`` and ``.timer`` into ``unit_dir`` (default user dir).
 
     Returns ``(service_path, timer_path)``. Does not run ``systemctl``.
+    When ``wake_system`` is True, uses the wake-enabled timer template
+    (``WakeSystem=true``).
     """
     target_dir = unit_dir or _get_unit_dir()
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -148,7 +176,7 @@ def install(
     home_dir = working_dir or str(paths.invoking_user_home() or Path.home())
 
     svc_text = render_service({"trinity_bin": bin_path, "home_dir": home_dir})
-    tmr_text = render_timer()
+    tmr_text = render_wake_timer() if wake_system else render_timer()
 
     svc = target_dir / "trinity-pull.service"
     tmr = target_dir / "trinity-pull.timer"

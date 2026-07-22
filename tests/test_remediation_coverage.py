@@ -86,10 +86,18 @@ color = "#1a1a1a"
 [surface.theme_tokens]
 enabled = true
 skip_qmllint = true
+[surface.behaviour]
+shared_dir = "{shared}"
+user_dir = "{user_state}"
 """
     from trinity.config import load_config_from_string
 
-    cfg = load_config_from_string(config_toml)
+    cfg = load_config_from_string(
+        config_toml.format(
+            shared=str(tmp_path / "shared"),
+            user_state=str(tmp_path / "user"),
+        )
+    )
 
     m = Manifest(tmp_path / "manifest.jsonl")
     plan = apply_to_surfaces(cfg, manifest=m, dry_run=False)
@@ -448,10 +456,18 @@ provider = "solid"
 color = "#1a1a1a"
 [surface.theme_tokens]
 enabled = false
+[surface.behaviour]
+shared_dir = "{shared}"
+user_dir = "{user_state}"
 """
     from trinity.config import load_config_from_string
 
-    cfg = load_config_from_string(config_toml)
+    cfg = load_config_from_string(
+        config_toml.format(
+            shared=str(tmp_path / "shared"),
+            user_state=str(tmp_path / "user"),
+        )
+    )
     m = Manifest(tmp_path / "manifest.jsonl")
 
     # Mock _display_manager_name to return something

@@ -348,6 +348,7 @@ def test_install_writes_unit_files(
         unit_dir: Path | None = None,
         trinity_bin: str | None = None,
         working_dir: str | None = None,
+        wake_system: bool = False,
     ) -> tuple[Path, Path]:
         target = unit_dir or (tmp_path / "user_systemd")
         target.mkdir(parents=True, exist_ok=True)
@@ -408,6 +409,7 @@ def test_install_handles_font_install_oserror(
         unit_dir: Path | None = None,
         trinity_bin: str | None = None,
         working_dir: str | None = None,
+        wake_system: bool = False,
     ) -> tuple[Path, Path]:
         target = unit_dir or (tmp_path / "user_systemd")
         target.mkdir(parents=True, exist_ok=True)

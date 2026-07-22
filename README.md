@@ -376,6 +376,61 @@ capability-dropping directives (`ProtectClock=`, `ProtectKernelModules=`):
 user managers cannot apply them and the unit would fail to start on
 Ubuntu-24.04-based systems.
 
+#### RTC Wake + NetworkManager Dispatcher (opt-in)
+
+`sudo trinity install --wake-network` additionally installs:
+
+- A **wake-enabled timer** (`WakeSystem=true`) so systemd configures an RTC
+  wakealarm and the laptop wakes from s2idle/S0ix around the next trigger.
+- A **NetworkManager dispatcher** at `/etc/NetworkManager/dispatcher.d/99-trinity-wake`
+  that runs `trinity apply --if-changed` when Wi-Fi reconnects.
+
+This is hardware-dependent and opt-in: neither is installed by default.
+The dispatcher is non-blocking, filters on `up` events only, and runs as the
+invoking user so wallpaper state files are written to the correct home.
+
+### Cyclical Provisioning
+
+`trinity cycle` lets you browse the past 7 days of wallpapers:
+
+```bash
+trinity cycle --offset 3      # show the image from 3 days ago
+trinity cycle                  # increment by 1 day (mod 7)
+```
+
+The base `config.toml` is never mutated; the active offset is persisted in
+`refresh_state.json`. The hourly `--if-changed` timer respects the persisted
+offset so a manual cycle is not clobbered until the upstream master image
+changes.
+
+### Clock Position
+
+When `theme_tokens.enabled = true`, you can reposition the clock on the
+SDDM login and lock screen:
+
+```toml
+[surface.theme_tokens.clock_position]
+enabled = true
+alignment = "top_left"
+```
+
+Alignment tokens: `top`, `bottom`, `left`, `right`, `center`,
+`top_left`, `top_right`, `bottom_left`, `bottom_right`.
+
+For free-floating clocks, use explicit coordinates instead:
+
+```toml
+[surface.theme_tokens.clock_position]
+enabled = true
+x = 100
+y = 200
+```
+
+The patcher detects whether the clock is inside a layout (`ColumnLayout`,
+`RowLayout`, etc.) or an independent `Item` and generates the appropriate
+QML (`Layout.alignment` vs `anchors`). Existing dynamic bindings (`visible`,
+`opacity`) are always preserved.
+
 ### Reversibility
 
 Every write is recorded in an append-only JSONL manifest with content hashes
@@ -506,6 +561,21 @@ check available.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the full quality gates and
 PR process.
+
+---
+
+## 🖥️ Optional GUI
+
+A minimal Go-based GUI is available in `gui/`. It wraps trinity CLI
+commands via a local HTTP server (no external dependencies, no Electron).
+
+```bash
+cd gui
+go build -o trinity-gui .
+./trinity-gui          # opens browser to local server
+```
+
+See [gui/README.md](gui/README.md) for details.
 
 ---
 

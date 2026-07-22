@@ -6,6 +6,24 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added — Features
+
+- **`trinity cycle` — temporal cyclical provisioning.** Cycle retrospectively through the past 7 days of Bing/RSS wallpapers without breaking the hourly `--if-changed` deterministic probe. `trinity cycle --offset N` fetches the image from N days ago; `trinity cycle` (no offset) increments the current offset by 1 (mod 7). The base `config.toml` is never mutated — the active temporal offset is persisted in `refresh_state.json`. The compound `--if-changed` token combines the provider fingerprint + offset so the hourly timer does not clobber a manual cycle.
+
+- **Clock position QML patching.** `[surface.theme_tokens.clock_position]` allows repositioning the clock on SDDM and lock-screen surfaces. Layout-managed clocks use `Layout.alignment`; independent items use `anchors` or explicit `x`/`y` coordinates. The patcher detects the enclosing container type automatically and preserves existing dynamic bindings (`visible`, `opacity`). Alignment tokens: `top`, `bottom`, `left`, `right`, `center`, `top_left`, `top_right`, `bottom_left`, `bottom_right`.
+
+- **RTC wake + NetworkManager dispatcher (opt-in).** `trinity install --wake-network` installs a wake-enabled systemd timer (`WakeSystem=true`) and a NetworkManager dispatcher script that runs `trinity apply --if-changed` when Wi-Fi reconnects. Requires root. The dispatcher is non-blocking (`&`), filters on `up` events only, and runs as the invoking user. RTC wakealarm availability is checked and warned if missing.
+
+- **Go/Wails v3 GUI foundation.** A minimal `gui/` directory with a Go HTTP server that wraps `trinity` CLI commands. Parses `manifest.jsonl` for history, calls `trinity apply`/`cycle`/`status`/`restore`/`doctor` via `os/exec` (never writes state files directly). Build: `cd gui && go build -o trinity-gui .`
+
+### Changed
+
+- `RefreshState` gained a `temporal_offset` field (backward-compatible, defaults to 0).
+- `apply_to_surfaces` gained a `temporal_offset` parameter that injects a day-offset into provider options for cyclical provisioning.
+- `systemd.install()` gained a `wake_system` parameter.
+- `trinity install` gained a `--wake-network` flag.
+- `ThemeTokens` gained a `clock_position` field (backward-compatible, defaults to disabled).
+
 ### Fixed
 
 - **CI workflow action versions corrected.** The workflows referenced non-existent versions (`actions/checkout@v7`, `actions/upload-artifact@v7`, `astral-sh/setup-uv@v7`). Pinned to real current versions: `actions/checkout@v4`, `actions/upload-artifact@v4`, `astral-sh/setup-uv@v5`.

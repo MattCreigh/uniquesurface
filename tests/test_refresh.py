@@ -180,6 +180,7 @@ def test_refresh_state_file_is_written(tmp_path: Path) -> None:
         "image_sha256",
         "wallpaper_path",
         "applied_at",
+        "temporal_offset",
     }
     shared_file = Path(raw["wallpaper_path"])
     assert shared_file.exists()

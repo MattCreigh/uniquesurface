@@ -651,3 +651,171 @@ def apply_lock_tokens(
     new_bytes = new_text.encode("utf-8")
     write_tracked(manifest, vendor_path, new_bytes, mode=0o644)
     return f"{name}: wrote {len(new_bytes)} bytes (sha {sha256_bytes(new_bytes)[:12]}…)"
+
+
+# --- Clock position patching (Feature 2) --------------------------------
+#
+# The clock position patcher repositions the clock item in SDDM Login.qml
+# and the Plasma lock-screen QML based on user config.  It detects whether
+# the clock is inside a layout (ColumnLayout, RowLayout, GridLayout, Flow)
+# or an independent Item/Rectangle and generates the appropriate QML:
+#
+# - Layout-managed: Layout.alignment: Qt.Align<Direction>
+# - Independent:    anchors.<side>: parent.<side>  (or anchors.centerIn: parent)
+# - Coordinates:    x: N; y: N  (only for independent items)
+#
+# Existing dynamic bindings (visible, opacity tied to multiscreen pointer
+# detection) are preserved — the patcher only adds lines, it never removes
+# existing property assignments.
+
+_LAYOUT_TYPES = ("ColumnLayout", "RowLayout", "GridLayout", "Flow")
+
+
+def _alignment_to_qml_layout(alignment: str) -> str:
+    """Map an alignment token to a QML Layout.alignment value."""
+    mapping = {
+        "top": "Qt.AlignTop",
+        "bottom": "Qt.AlignBottom",
+        "left": "Qt.AlignLeft",
+        "right": "Qt.AlignRight",
+        "center": "Qt.AlignHCenter | Qt.AlignVCenter",
+        "top_left": "Qt.AlignTop | Qt.AlignLeft",
+        "top_right": "Qt.AlignTop | Qt.AlignRight",
+        "bottom_left": "Qt.AlignBottom | Qt.AlignLeft",
+        "bottom_right": "Qt.AlignBottom | Qt.AlignRight",
+    }
+    return mapping.get(alignment, "Qt.AlignCenter")
+
+
+def _alignment_to_qml_anchors(alignment: str) -> str:
+    """Map an alignment token to QML anchors property assignments."""
+    parts: list[str] = []
+    if "top" in alignment and "bottom" not in alignment:
+        parts.append("anchors.top: parent.top")
+    if "bottom" in alignment:
+        parts.append("anchors.bottom: parent.bottom")
+    if "left" in alignment and "right" not in alignment and "center" not in alignment:
+        parts.append("anchors.left: parent.left")
+    if "right" in alignment:
+        parts.append("anchors.right: parent.right")
+    if alignment == "center":
+        return "anchors.centerIn: parent"
+    if not parts:
+        return "anchors.centerIn: parent"
+    return "\n        ".join(parts)
+
+
+def _detect_clock_container(text: str, clock_id: str) -> str | None:
+    """Detect if the clock item is inside a layout container.
+
+    Returns the container type name (e.g. "ColumnLayout") or None if
+    the clock is an independent Item/Rectangle.
+
+    The heuristic examines the lines preceding the clock declaration
+    for a layout container opening brace that has not been closed yet
+    at the point where the clock item is declared.
+    """
+    lines = text.splitlines()
+    clock_decl = f"id: {clock_id}"
+    clock_line_idx = None
+    for i, line in enumerate(lines):
+        if clock_decl in line:
+            clock_line_idx = i
+            break
+
+    if clock_line_idx is None:
+        return None
+
+    # Walk backward from the clock declaration, tracking brace depth.
+    # We need to find the *enclosing block* of the block that contains
+    # the clock.  When depth crosses -1 we found the clock's parent
+    # block opener; when it crosses -2 we found the grandparent (the
+    # layout container we're looking for).
+    depth = 0
+    for i in range(clock_line_idx - 1, -1, -1):
+        line = lines[i]
+        opens = line.count("{")
+        closes = line.count("}")
+        depth += closes
+        depth -= opens
+
+        # depth < 0 means we found an enclosing block opener.
+        # The first one (depth=-1) is the clock's parent (e.g. Text {}).
+        # The second one (depth=-2) is the grandparent (e.g. ColumnLayout {}).
+        if depth < 0:
+            for layout_type in _LAYOUT_TYPES:
+                if layout_type in line:
+                    return layout_type
+            # If this is the first opener and it's not a layout,
+            # keep going to check the next level up.
+            if depth < -1:
+                return None
+    return None
+
+
+def apply_clock_position_tokens(
+    text: str,
+    clock_id: str,
+    position: ClockPosition,
+) -> tuple[str, str]:
+    """Apply clock position overrides to QML text.
+
+    Returns ``(patched_text, message)``. When ``position.enabled`` is
+    False, returns the text unchanged.
+
+    The function detects whether the clock is inside a layout container
+    (ColumnLayout, RowLayout, GridLayout, Flow) or an independent
+    Item/Rectangle and generates appropriate QML:
+
+    - Layout-managed clocks: ``Layout.alignment: Qt.Align<Direction>``
+    - Independent clocks: ``anchors.<side>: parent.<side>`` or
+      ``anchors.centerIn: parent``
+    - Explicit coordinates (x, y): only applied to independent clocks
+    """
+    if not position.enabled:
+        return text, "clock_position: disabled (no-op)"
+
+    container = _detect_clock_container(text, clock_id)
+
+    lines_to_inject: list[str] = []
+    if container is not None:
+        # Layout-managed: use Layout.alignment
+        if position.alignment is not None:
+            qml_align = _alignment_to_qml_layout(position.alignment)
+            lines_to_inject.append(f"        Layout.alignment: {qml_align}")
+    else:
+        # Independent item: use anchors or coordinates
+        if position.x is not None and position.y is not None:
+            lines_to_inject.append(f"        x: {position.x}")
+            lines_to_inject.append(f"        y: {position.y}")
+        elif position.alignment is not None:
+            anchor_lines = _alignment_to_qml_anchors(position.alignment)
+            for line in anchor_lines.split("\n"):
+                lines_to_inject.append(f"        {line}")
+
+    if not lines_to_inject:
+        return text, "clock_position: no alignment or coordinates set"
+
+    # Find the clock item's opening line (the line with the clock's id)
+    # and inject the alignment/anchor lines right after the id line.
+    clock_decl = f"id: {clock_id}"
+    lines = text.splitlines(keepends=True)
+    injected = False
+    new_lines: list[str] = []
+    for line in lines:
+        new_lines.append(line)
+        if not injected and clock_decl in line:
+            for inj_line in lines_to_inject:
+                new_lines.append(inj_line + "\n")
+            injected = True
+
+    if not injected:
+        return text, f"clock_position: clock id {clock_id!r} not found"
+
+    result = "".join(new_lines)
+    container_info = f"in {container}" if container else "as independent item"
+    return result, f"clock_position: applied ({container_info})"
+
+
+# Import here to avoid circular import at module level
+from trinity.schema import ClockPosition  # noqa: E402

@@ -390,6 +390,7 @@ def apply_to_surfaces(
     adopt_drift: bool = False,
     restart_dm: bool = False,
     if_changed: bool = False,
+    temporal_offset: int = 0,
 ) -> list[str]:
     """Run the apply pipeline for ``config``.
 
@@ -426,10 +427,38 @@ def apply_to_surfaces(
     hourly systemd timer so upstream publishes (which happen at
     provider-specific times) land within the hour without hammering
     the provider with image downloads.
+
+    ``temporal_offset``: when > 0, injects a day-offset into the
+    provider's options so a cyclical provisioning run (``trinity cycle``)
+    fetches a historical image.  The compound fingerprint includes
+    the offset so ``--if-changed`` does not clobber a manual cycle.
     """
     expanded = expand_behaviour_paths(config)
     user_dir = Path(expanded.surface.behaviour.user_dir).expanduser()
     shared_dir = Path(expanded.surface.behaviour.shared_dir)
+
+    # Inject temporal offset into provider options for cyclical
+    # provisioning (trinity cycle).  The offset is not persisted to
+    # config.toml — it lives in refresh_state.json and is applied
+    # per-run so the base config stays authoritative.
+    if temporal_offset > 0:
+        from trinity.schema import Source, SourceOptions
+
+        mutated_options = dict(expanded.surface.source.options.model_dump())
+        mutated_options["index"] = temporal_offset
+        expanded = expanded.model_copy(deep=True)
+        expanded = expanded.model_copy(
+            update={
+                "surface": expanded.surface.model_copy(
+                    update={
+                        "source": Source(
+                            provider=expanded.surface.source.provider,
+                            options=SourceOptions(**mutated_options),
+                        )
+                    }
+                )
+            }
+        )
     # A dry run must leave the filesystem untouched — including these
     if not dry_run:
         user_dir.mkdir(parents=True, exist_ok=True)
@@ -456,6 +485,10 @@ def apply_to_surfaces(
         expanded.surface.source.provider,
         expanded.surface.source.options.model_dump(),
     )
+    # Include temporal offset in the compound fingerprint so --if-changed
+    # does not clobber a manual cycle.
+    if temporal_offset > 0:
+        fingerprint = f"{fingerprint}:offset{temporal_offset}"
     if prior_state is not None and prior_state.fingerprint != fingerprint:
         # Config changed since the last apply: none of the cached
         # token/digest comparisons are meaningful any more.
@@ -522,6 +555,7 @@ def apply_to_surfaces(
                 image_sha256=image_sha,
                 wallpaper_path=str(shared),
                 applied_at=refresh_state.now_iso(),
+                temporal_offset=temporal_offset,
             ),
         )
         _restore_shared_owner(state_file)
@@ -575,6 +609,7 @@ def apply_to_surfaces(
                 image_sha256=image_sha,
                 wallpaper_path=str(shared),
                 applied_at=refresh_state.now_iso(),
+                temporal_offset=temporal_offset,
             ),
         )
         _restore_shared_owner(state_file)

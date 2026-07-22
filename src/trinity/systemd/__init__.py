@@ -10,6 +10,7 @@ __all__ = [
     "pause",
     "render_service",
     "render_timer",
+    "render_wake_timer",
     "resume",
     "systemctl",
 ]
@@ -24,6 +25,7 @@ from trinity.systemd.writer import (
     pause,
     render_service,
     render_timer,
+    render_wake_timer,
     resume,
     systemctl,
 )

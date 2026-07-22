@@ -794,12 +794,113 @@ def migrate_from_shell(dry_run: bool) -> None:
     click.echo(f"wrote {target}")
 
 
+# --- cycle ------------------------------------------------------------
+
+
+@main.command()
+@click.option(
+    "--offset",
+    type=click.IntRange(0, 6),
+    default=None,
+    help=(
+        "Day offset (0 = today, 1 = yesterday, … 6 = 6 days ago). "
+        "If omitted, increments the current offset by 1 (mod 7)."
+    ),
+)
+@click.option("--dry-run", is_flag=True, help="Preview the plan without writing.")
+@click.option(
+    "--config",
+    "config_path",
+    type=click.Path(exists=True, path_type=Path),
+    default=None,
+)
+def cycle(offset: int | None, dry_run: bool, config_path: Path | None) -> None:
+    """Cycle retrospectively through the past 7 days of wallpapers.
+
+    The base config.toml is never mutated; the active temporal offset
+    is persisted in refresh_state.json.  The hourly ``--if-changed``
+    timer respects the persisted offset so a manual cycle is not
+    clobbered until the upstream master image changes.
+    """
+    from trinity import paths
+    from trinity.config import load_config
+    from trinity.manifest import Manifest
+    from trinity.orchestrator import apply_to_surfaces
+    from trinity.refresh_state import STATE_FILENAME, load, now_iso, save
+
+    if config_path is None and not paths.config_file().exists():
+        raise CLIError(
+            f"no config at {paths.config_file()}",
+            hint="run `trinity config init` to create one",
+            status=EXIT_USAGE,
+        )
+
+    from pydantic import ValidationError
+
+    try:
+        cfg = load_config(config_path)
+    except (ValidationError, ValueError, OSError) as exc:
+        raise CLIError(
+            f"invalid config {config_path or paths.config_file()}: {exc}",
+            hint="run `trinity config validate` after fixing the file",
+        ) from exc
+
+    # Determine the target offset.
+    user_dir = Path(cfg.surface.behaviour.user_dir).expanduser()
+    state_file = user_dir / STATE_FILENAME
+    prior_state = load(state_file)
+    current_offset = prior_state.temporal_offset if prior_state else 0
+    if offset is not None:
+        target_offset = offset
+    else:
+        target_offset = (current_offset + 1) % 7
+
+    click.echo(f"cycle: offset {target_offset} (was {current_offset})")
+
+    manifest = Manifest()
+    plan = apply_to_surfaces(
+        cfg,
+        manifest=manifest,
+        dry_run=dry_run,
+        temporal_offset=target_offset,
+    )
+    for line in plan:
+        click.echo(line)
+
+    # Persist the new offset.
+    if not dry_run and any(line.startswith("wrote ") for line in plan):
+        from trinity.refresh_state import RefreshState
+
+        # Re-read to get the latest state (apply may have saved its own)
+        new_state = load(state_file)
+        if new_state is not None:
+            save(
+                state_file,
+                RefreshState(
+                    fingerprint=new_state.fingerprint,
+                    probe_token=new_state.probe_token,
+                    image_sha256=new_state.image_sha256,
+                    wallpaper_path=new_state.wallpaper_path,
+                    applied_at=now_iso(),
+                    temporal_offset=target_offset,
+                ),
+            )
+
+
 # --- install ----------------------------------------------------------
 
 
 @main.command()
 @click.option("--yes", is_flag=True, help="Skip confirmation prompts.")
-def install(yes: bool) -> None:
+@click.option(
+    "--wake-network",
+    is_flag=True,
+    help=(
+        "Also install a NetworkManager dispatcher script that runs "
+        "trinity apply --if-changed when Wi-Fi reconnects. Requires root."
+    ),
+)
+def install(yes: bool, wake_network: bool) -> None:
     """Install Inter font, create shared dir, enable systemd timer.
 
     Requires root for the font install and shared-dir creation steps.
@@ -868,7 +969,7 @@ def install(yes: bool) -> None:
         click.echo(f"    failed to create {sw}; run as root", err=True)
 
     click.echo("==> Installing systemd timer")
-    svc, tmr = systemd.install()
+    svc, tmr = systemd.install(wake_system=wake_network)
     click.echo(f"    wrote {svc}")
     click.echo(f"    wrote {tmr}")
     ok, msg = systemd.enable_and_start()
@@ -876,6 +977,41 @@ def install(yes: bool) -> None:
         click.echo(f"    {msg}")
     else:
         click.echo(f"    systemd enable failed: {msg}", err=True)
+
+    if wake_network:
+        click.echo("==> Installing NetworkManager dispatcher (requires root)")
+        if os.geteuid() != 0:
+            click.echo(
+                "    --wake-network requires root; re-run with sudo",
+                err=True,
+            )
+            sys.exit(EXIT_ERROR)
+        import pwd
+
+        from trinity.systemd.network_dispatcher import (
+            install_network_dispatcher_script,
+        )
+
+        sudo_user = os.environ.get("SUDO_USER")
+        if sudo_user:
+            target_user = sudo_user
+        else:
+            target_user = pwd.getpwuid(os.getuid()).pw_name
+
+        # Validate RTC wakealarm availability
+        rtc_path = Path("/sys/class/rtc/rtc0/wakealarm")
+        if not rtc_path.exists():
+            click.echo(
+                "    warning: /sys/class/rtc/rtc0/wakealarm not found; "
+                "RTC wake will not work on this hardware",
+                err=True,
+            )
+
+        try:
+            disp_path = install_network_dispatcher_script(target_user)
+            click.echo(f"    wrote {disp_path}")
+        except OSError as exc:
+            click.echo(f"    dispatcher install failed: {exc}", err=True)
 
 
 @main.command()

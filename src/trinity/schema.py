@@ -217,6 +217,56 @@ class Lock(_StrictModel):
     suppress_wake_keypress: bool = Field(default=True)
 
 
+# Alignment tokens for clock positioning.
+_ALIGN_RE = re.compile(
+    r"^(top|bottom|left|right|center"
+    r"|top_left|top_right|bottom_left|bottom_right)$"
+)
+
+
+class ClockPosition(_StrictModel):
+    """Clock position overrides for SDDM login and lock screen.
+
+    When ``enabled = true``, the QML patcher repositions the clock item
+    based on the specified alignment or coordinates.  Layout-managed
+    clocks use ``Layout.alignment``; free-floating clocks use
+    ``anchors``.
+
+    The patch respects existing dynamic bindings (``visible``,
+    ``opacity`` tied to multiscreen pointer detection) and does not
+    inject absolute coordinates into layout-managed items.
+    """
+
+    enabled: bool = Field(default=False, description="Enable clock repositioning.")
+    alignment: str | None = Field(
+        default=None,
+        description=(
+            "Alignment token for layout-managed clocks: top, bottom, "
+            "left, right, center, top_left, top_right, bottom_left, "
+            "bottom_right."
+        ),
+    )
+    x: int | None = Field(
+        default=None, ge=0, description="Absolute X coordinate (free-floating only)."
+    )
+    y: int | None = Field(
+        default=None, ge=0, description="Absolute Y coordinate (free-floating only)."
+    )
+
+    @field_validator("alignment")
+    @classmethod
+    def _check_alignment(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if not _ALIGN_RE.match(value):
+            raise ValueError(
+                f"invalid clock alignment {value!r}; "
+                f"expected one of: top, bottom, left, right, center, "
+                f"top_left, top_right, bottom_left, bottom_right"
+            )
+        return value
+
+
 class ThemeTokens(_StrictModel):
     """Opt-in switch for the fragile QML-token patching machinery.
 
@@ -245,6 +295,10 @@ class ThemeTokens(_StrictModel):
             "built-in blue locker. Only set this if qmllint is unavailable "
             "and you accept the risk."
         ),
+    )
+    clock_position: ClockPosition = Field(
+        default_factory=lambda: ClockPosition(),
+        description="Clock position overrides for SDDM and lock screen.",
     )
 
 

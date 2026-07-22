@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Trinity Wallpaper Manager</title>
+  <style>
+    :root {
+      --bg:    #1e1e2e;
+      --bg2:   #313244;
+      --fg:    #cdd6f4;
+      --accent:#89b4fa;
+      --danger:#f38ba8;
+      --ok:    #a6e3a1;
+      --muted:#7f849c;
+      --radius:8px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--fg);
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+    }
+    header {
+      padding: 1.2rem 1.5rem;
+      background: var(--bg2);
+      border-bottom: 1px solid #45475a;
+    }
+    header h1 {
+      margin: 0;
+      font-size: 1.3rem;
+      font-weight: 600;
+    }
+    header .subtitle {
+      color: var(--muted);
+      font-size: .8rem;
+      margin-top: .2rem;
+    }
+    main {
+      flex: 1;
+      padding: 1.5rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: .6rem;
+    }
+    button {
+      padding: .55rem 1.1rem;
+      border: none;
+      border-radius: var(--radius);
+      background: var(--bg2);
+      color: var(--fg);
+      font-size: .85rem;
+      cursor: pointer;
+      transition: background .15s, transform .05s;
+    }
+    button:hover   { background: #45475a; }
+    button:active  { transform: scale(.97); }
+    button.danger { background: var(--danger); }
+    button.danger:hover { background: #eb6f92; }
+    .output-wrap {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: .4rem;
+    }
+    .output-header {
+      display: flex;
+      align-items: center;
+      gap: .5rem;
+      font-size: .8rem;
+      color: var(--muted);
+    }
+    pre#output {
+      flex: 1;
+      margin: 0;
+      padding: 1rem;
+      background: #181825;
+      border: 1px solid #313244;
+      border-radius: var(--radius);
+      overflow: auto;
+      font-family: "JetBrains Mono", "Fira Code", monospace;
+      font-size: .82rem;
+      line-height: 1.4;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    #status-indicator {
+      width: .6rem; height: .6rem;
+      border-radius: 50%;
+      background: var(--muted);
+      transition: background .2s;
+    }
+    #status-indicator.busy   { background: var(--accent); }
+    #status-indicator.error  { background: var(--danger); }
+    #status-indicator.ready  { background: var(--ok); }
+    footer {
+      padding: .6rem 1.5rem;
+      font-size: .7rem;
+      color: var(--muted);
+      border-top: 1px solid #313244;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Trinity Wallpaper Manager</h1>
+    <div class="subtitle">Thin GUI wrapper — all operations delegated to the <code>trinity</code> CLI</div>
+  </header>
+  <main>
+    <div class="actions">
+      <button onclick="call('/api/status')">Status</button>
+      <button onclick="call('/api/apply')">Apply</button>
+      <button onclick="call('/api/cycle')">Cycle (next)</button>
+      <button onclick="call('/api/cycle?offset=1')">Cycle (+1)</button>
+      <button onclick="call('/api/cycle?offset=-1')">Cycle (prev)</button>
+      <button onclick="call('/api/restore')" class="danger">Restore</button>
+      <button onclick="call('/api/doctor')">Doctor</button>
+      <button onclick="call('/api/history')">Manifest History</button>
+    </div>
+    <div class="output-wrap">
+      <div class="output-header">
+        <span id="status-indicator" class="ready"></span>
+        <span id="status-label">Idle</span>
+      </div>
+      <pre id="output">Click a button above to run a Trinity command.</pre>
+    </div>
+  </main>
+  <footer>
+    Trinity GUI — no external dependencies · all state changes go through <code>trinity</code> CLI
+  </footer>
+
+  <script>
+    const out    = document.getElementById('output');
+    const ind    = document.getElementById('status-indicator');
+    const label  = document.getElementById('status-label');
+
+    function setBusy() {
+      ind.className = 'busy';
+      label.textContent = 'Running…';
+    }
+    function setReady() {
+      ind.className = 'ready';
+      label.textContent = 'Idle';
+    }
+    function setError(msg) {
+      ind.className = 'error';
+      label.textContent = 'Error';
+      out.textContent = msg;
+    }
+
+    async function call(endpoint) {
+      setBusy();
+      out.textContent = '';
+      try {
+        const resp = await fetch(endpoint, { method: 'POST' });
+        const data  = await resp.json();
+        if (data.error) {
+          setError(data.error);
+          return;
+        }
+        setReady();
+        if (data.output !== undefined) {
+          out.textContent = data.output;
+        } else if (data.entries) {
+          out.textContent = JSON.stringify(data.entries, null, 2);
+        } else {
+          out.textContent = '(no output)';
+        }
+      } catch (err) {
+        setError('Request failed: ' + err.message);
+      }
+    }
+  </script>
+</body>
+</html>

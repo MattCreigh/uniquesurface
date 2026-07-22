@@ -43,6 +43,10 @@ class RefreshState:
     wallpaper_path: str
     # ISO 8601 UTC timestamp of the apply.
     applied_at: str
+    # Temporal offset for cyclical provisioning (trinity cycle).
+    # 0 = current day, 1 = yesterday, … 6 = 6 days ago.
+    # Defaults to 0 for backward compatibility with older state files.
+    temporal_offset: int = 0
 
 
 def source_fingerprint(provider: str, options: dict[str, Any]) -> str:
@@ -51,6 +55,18 @@ def source_fingerprint(provider: str, options: dict[str, Any]) -> str:
         {"provider": provider, "options": options}, sort_keys=True, default=str
     )
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def cycle_token(provider: str, options: dict[str, Any], offset: int) -> str:
+    """Compound token combining the provider fingerprint + temporal offset.
+
+    The ``--if-changed`` timer uses this so a manual ``trinity cycle``
+    (which changes the offset but not the config) is not clobbered by
+    the next hourly run — the compound token differs until the user
+    cycles again or the upstream master image changes.
+    """
+    base = source_fingerprint(provider, options)
+    return f"{base}:{offset}"
 
 
 def now_iso() -> str:
@@ -73,6 +89,7 @@ def load(path: Path) -> RefreshState | None:
             image_sha256=str(raw["image_sha256"]),
             wallpaper_path=str(raw["wallpaper_path"]),
             applied_at=str(raw["applied_at"]),
+            temporal_offset=int(raw.get("temporal_offset", 0)),
         )
     except KeyError:
         return None
