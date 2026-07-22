@@ -55,6 +55,7 @@ After a successful ``install``/``apply`` with theme tokens enabled:
 from __future__ import annotations
 
 import hashlib
+import os
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -138,12 +139,16 @@ def fork_breeze_theme(
             )
     # Vendor changed (or first run / no marker): rebuild from a clean
     # copy so no stale files from the previous vendor version linger.
-    if dest.exists():
-        shutil.rmtree(dest)
-    dest.mkdir(parents=True, exist_ok=True)
+    # Build in a temporary sibling directory so the existing fork is
+    # left untouched until the new copy is fully ready, then atomically
+    # swap.  If the copy fails the old fork survives intact.
+    staging = dest.parent / f"{FORK_THEME_NAME}.new"
+    if staging.exists():
+        shutil.rmtree(staging)
+    staging.mkdir(parents=True, exist_ok=True)
     count = 0
     for item in src.iterdir():
-        target = dest / item.name
+        target = staging / item.name
         if item.is_file():
             data = item.read_bytes()
             # Patch metadata.desktop's Name entry so the SDDM theme
@@ -152,7 +157,11 @@ def fork_breeze_theme(
                 text = data.decode("utf-8", errors="replace")
                 patched = _patch_metadata_name(text)
                 data = patched.encode("utf-8")
-            write_tracked(manifest, target, data, mode=0o644)
+            # Write directly to staging (not tracked) — we'll record
+            # the final paths in the manifest after the atomic swap.
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+            os.chmod(target, 0o644)
             count += 1
         elif item.is_dir():
             # Recurse into subdirectories (e.g. components/).
@@ -162,9 +171,45 @@ def fork_breeze_theme(
                     sub_target = target / rel
                     sub_target.parent.mkdir(parents=True, exist_ok=True)
                     sub_data = sub.read_bytes()
-                    write_tracked(manifest, sub_target, sub_data, mode=0o644)
+                    sub_target.write_bytes(sub_data)
+                    os.chmod(sub_target, 0o644)
                     count += 1
-    write_tracked(manifest, marker, digest.encode("utf-8"), mode=0o644)
+    # Write the source-digest marker.
+    marker_path = staging / _SOURCE_DIGEST_NAME
+    marker_path.write_bytes(digest.encode("utf-8"))
+    os.chmod(marker_path, 0o644)
+
+    # Atomically swap: rename old to .old, new to dest, then remove .old.
+    old = dest.parent / f"{FORK_THEME_NAME}.old"
+    if old.exists():
+        shutil.rmtree(old)
+    if dest.exists():
+        os.rename(dest, old)
+    os.rename(staging, dest)
+
+    # Record every file in the manifest with the *final* paths so
+    # ``restore`` can revert them.  We do this after the swap so the
+    # manifest reflects the actual on-disk state.
+    for item in dest.iterdir():
+        if item.is_file():
+            manifest.append(
+                op="write",
+                path=str(item),
+                prev_sha256=None,
+                new_sha256=hashlib.sha256(item.read_bytes()).hexdigest(),
+            )
+        elif item.is_dir():
+            for sub in item.rglob("*"):
+                if sub.is_file():
+                    manifest.append(
+                        op="write",
+                        path=str(sub),
+                        prev_sha256=None,
+                        new_sha256=hashlib.sha256(sub.read_bytes()).hexdigest(),
+                    )
+
+    if old.exists():
+        shutil.rmtree(old)
     return ForkResult(
         created=True,
         message=f"forked {count} files from {src} to {dest}",

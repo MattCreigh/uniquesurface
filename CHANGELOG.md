@@ -6,6 +6,32 @@ adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **CI workflow action versions corrected.** The workflows referenced non-existent versions (`actions/checkout@v7`, `actions/upload-artifact@v7`, `astral-sh/setup-uv@v7`). Pinned to real current versions: `actions/checkout@v4`, `actions/upload-artifact@v4`, `astral-sh/setup-uv@v5`.
+- **Unknown provider no longer crashes with a traceback.** `validate_provider_options`, `fetch_from_source`, and `probe_from_source` now convert the `KeyError` from `get_provider` into a clear `ValueError`/`ProviderError` with the message `"unknown provider '<name>'; run 'trinity provider list'"`.
+- **SSRF pre-flight rejects mixed DNS records.** `_resolve_safely` previously returned the first safe IP and only rejected when *no* address was safe. A hostname resolving to both a private and a public address (DNS rebinding) is now rejected — if *any* resolved address is private/loopback/link-local/reserved/multicast/unspecified, the request is refused.
+- **Decompression-bomb guard added.** `verify_image` now sets `Image.MAX_IMAGE_PIXELS = 50_000_000` (50 MP) before opening and catches `DecompressionBombError`/`DecompressionBombWarning`, raising `ProviderError("image exceeds safe pixel limit")` instead of crashing the hourly timer with an OOM.
+- **qmllint fail-closed gate no longer silently bypassed.** `lint_file` returned `ok=True` when no working qmllint was found, silently accepting every QML patch. It now returns `ok=False` with a helpful stderr message. The orchestrator reverts the patch unless the new `surface.theme_tokens.skip_qmllint` config flag is explicitly set to `true`.
+- **Inter-process lock around apply.** Two concurrent `trinity apply` runs could race on the manifest and shared files. A `fcntl.flock` lockfile at `<user_dir>/lock` is now acquired during non-dry-run applies. The lock is best-effort: if `fcntl` is unavailable or the lockfile cannot be created, the apply proceeds with a warning.
+- **Manifest restore is now transactional.** `restore` previously applied entries newest-first and raised `FileNotFoundError` on a missing snapshot mid-rollback, leaving previously reverted entries in a partially rolled-back state. It now pre-validates that every referenced snapshot exists *before* applying any entry, raising upfront with a clear message naming the missing snapshot.
+- **SDDM fork is now atomic.** `fork_breeze_theme` deleted the existing fork with `shutil.rmtree` before rebuilding. If the copy failed, the SDDM theme directory was left missing. The fork is now built in a staging directory (`<name>.new`) and atomically swapped via rename. If the copy fails, the old fork survives intact.
+- **pkexec/sudo inconsistency fixed.** `_have_pkexec()` checked for both `pkexec` and `sudo`, but `_restart_display_manager` only used `sudo -n`. When run as a non-root user, `pkexec` is now preferred (non-interactive) when available, falling back to `sudo -n`.
+- **Password character validation.** `Fonts.password_character` now rejects control characters (`\x00`–`\x1F`, `\x7F`), newlines, tabs, double quotes, and backslashes that would break generated QML. The existing `min_length=1, max_length=4` constraints are preserved.
+- **Atomic write fallback preserves exception context.** `_direct_overwrite` previously suppressed the original exception with `from None`. It now chains the exception with `from exc` so the root cause is visible in tracebacks.
+
+### Changed
+
+- **Snapshot disk budget added.** The manifest retains 200 entries; with 50 MiB wallpapers, snapshots could reach 10 GiB. An additional retention rule prunes unreferenced snapshots older than 30 days, or caps total snapshot directory size at 500 MiB, whichever is more restrictive. The 200-entry count remains as a secondary bound.
+- **Font warning only shown when theme tokens are enabled.** `trinity apply` previously warned about a missing font family even when `theme_tokens.enabled = false`. Tier-1 (wallpaper-only) users no longer see the irrelevant fontconfig warning.
+- **Descriptor/plasma detection deferred from import time.** The module-level regex constants in `qml_patch.py` were resolved at import time, calling `detect_plasma_version()` (which may shell out to `plasmashell --version`). They are now initialized with hardcoded fallback patterns at import time and upgraded lazily on first use via `_get_pattern()`, deferring version detection until the first actual patch operation.
+- **`trinity restore --dry-run`** added. Previews restore operations without writing anything.
+
+### Internal
+
+- Test count grew from 348 to 398. New regression tests cover: mixed DNS SSRF, all-public DNS acceptance, IPv4-mapped IPv6 private rejection, unknown provider ValueError/ProviderError, decompression bomb rejection, missing snapshot restore abort, qmllint missing fail-closed, qmllint skip_qmllint opt-out, concurrent apply lock, password character validation, SDDM fork atomic swap, snapshot age/size pruning, and deferred descriptor resolution.
+- Coverage: 84.50% → 85.12%.
+
 ## [0.2.6] — 2026-07-18
 
 ### Fixed

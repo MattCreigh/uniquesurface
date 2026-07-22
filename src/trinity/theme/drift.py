@@ -24,9 +24,8 @@ from typing import TYPE_CHECKING, Any
 from trinity.manifest import sha256_bytes, sha256_file
 from trinity.theme import extract
 from trinity.theme.qml_patch import (
-    _FADEOUT_TIMER_INTERVAL_RE,
-    _WAKE_GUARD_BLOCK_RE,
     HEADER_LINE,
+    _get_pattern,
 )
 
 if TYPE_CHECKING:
@@ -189,8 +188,12 @@ def normalize_managed_values(text: str, *, target_name: str | None = None) -> st
             r'\1"@trinity@managed@"',
             text,
         )
-    text = _FADEOUT_TIMER_INTERVAL_RE.sub(r"\g<1>@trinity@managed@", text)
-    text = _WAKE_GUARD_BLOCK_RE.sub("", text)
+    text = _get_pattern("plasma_lockscreen_ui", "fadeout_timer").sub(
+        r"\g<1>@trinity@managed@", text
+    )
+    text = _get_pattern(
+        "plasma_lockscreen_mainblock", "wake_guard", field="remove_anchor"
+    ).sub("", text)
     return text
 
 

@@ -148,13 +148,24 @@ class QmlLintResult:
 def lint_file(path: Path) -> QmlLintResult:
     """Run ``qmllint`` on ``path`` and return the result.
 
-    Returns a "not available" result (with ``ok=True``) when the
-    linter is missing — we never block a patch on a missing
-    optional tool, but the apply path logs the absence.
+    Returns a "not available" result (with ``ok=False``) when the
+    linter is missing.  The fail-closed gate in the orchestrator
+    handles this by reverting the patch unless ``skip_qmllint`` is set
+    in the config.
     """
     binary = qmllint_available()
     if binary is None:
-        return QmlLintResult(ok=True, stdout="", stderr="", timed_out=False)
+        return QmlLintResult(
+            ok=False,
+            stdout="",
+            stderr=(
+                "qmllint not found; install qml6-qttools (Debian/Neon), "
+                "qt6-qtdeclarative-devel (Fedora), or qt6-declarative (Arch) "
+                "to validate patches, or set surface.theme_tokens.skip_qmllint "
+                "= true to bypass at your own risk"
+            ),
+            timed_out=False,
+        )
     try:
         proc = subprocess.run(
             [binary, str(path)],

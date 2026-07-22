@@ -238,7 +238,7 @@ def apply(
 
     from trinity.theme.font_install import is_installed
 
-    if not is_installed(cfg.surface.fonts.family):
+    if cfg.surface.theme_tokens.enabled and not is_installed(cfg.surface.fonts.family):
         click.echo(
             f"Warning: font family '{cfg.surface.fonts.family}' "
             "not found by fontconfig.",
@@ -259,14 +259,19 @@ def apply(
         )
 
     manifest = Manifest()
-    plan = apply_to_surfaces(
-        cfg,
-        manifest=manifest,
-        dry_run=dry_run,
-        adopt_drift=adopt_drift,
-        restart_dm=restart_dm,
-        if_changed=if_changed,
-    )
+    from trinity.orchestrator import _apply_lock, _noop_lock
+
+    user_dir = Path(cfg.surface.behaviour.user_dir).expanduser()
+    lock_cm = _apply_lock(user_dir) if not dry_run else _noop_lock()
+    with lock_cm:
+        plan = apply_to_surfaces(
+            cfg,
+            manifest=manifest,
+            dry_run=dry_run,
+            adopt_drift=adopt_drift,
+            restart_dm=restart_dm,
+            if_changed=if_changed,
+        )
     for line in plan:
         click.echo(line)
     # The orchestrator already emits a precise "restart <dm>" or
@@ -298,7 +303,12 @@ def apply(
     help="Stop restoring at this ISO timestamp.",
 )
 @click.option("--yes", is_flag=True, help="Skip the confirmation prompt.")
-def restore(to_timestamp: str | None, yes: bool) -> None:
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Preview the restore operations without writing anything.",
+)
+def restore(to_timestamp: str | None, yes: bool, dry_run: bool) -> None:
     """Revert every recorded change."""
     from trinity.manifest import Manifest
     from trinity.manifest import restore as _restore
@@ -307,9 +317,34 @@ def restore(to_timestamp: str | None, yes: bool) -> None:
     if not m.path.exists():
         click.echo("manifest log is empty; nothing to restore.")
         return
-    if not yes and not click.confirm(
-        f"Restore {len(m.iter_entries())} recorded change(s)?"
-    ):
+    entries = m.iter_entries()
+    if to_timestamp is not None:
+        to_restore = [e for e in entries if e.ts > to_timestamp]
+    else:
+        to_restore = list(entries)
+    to_restore.reverse()
+
+    if dry_run:
+        click.echo(f"Would restore {len(to_restore)} file(s):")
+        for entry in to_restore:
+            if entry.op == "write":
+                if entry.prev_bytes_path and Path(entry.prev_bytes_path).exists():
+                    click.echo(
+                        f"  restore {entry.path} "
+                        f"(from snapshot {entry.prev_bytes_path})"
+                    )
+                elif entry.prev_sha256 is None:
+                    click.echo(f"  delete {entry.path} (was newly created)")
+                else:
+                    click.echo(
+                        f"  CANNOT restore {entry.path} "
+                        f"(missing snapshot {entry.prev_bytes_path})"
+                    )
+            elif entry.op == "delete":
+                click.echo(f"  re-delete {entry.path}")
+        return
+
+    if not yes and not click.confirm(f"Restore {len(to_restore)} recorded change(s)?"):
         click.echo("aborted.")
         return
     count = _restore(m, to=to_timestamp)

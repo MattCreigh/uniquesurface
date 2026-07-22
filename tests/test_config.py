@@ -157,3 +157,38 @@ provider = "bing"
 """
     with pytest.raises(Exception, match=r"extra|bogus_key"):
         load_config_from_string(toml)
+
+
+# --- password character validation (Phase 2.5) -------------------------
+
+
+def test_password_character_rejects_newline() -> None:
+    """Newlines in password_character are rejected (would break QML)."""
+    bad = SAMPLE_TOML.replace('password_character = "*"', 'password_character = "\\n"')
+    with pytest.raises(Exception, match="password_character"):
+        config.load_config_from_string(bad)
+
+
+def test_password_character_rejects_control_char() -> None:
+    """Control characters (tab, NUL, etc.) in password_character are rejected."""
+    bad = SAMPLE_TOML.replace('password_character = "*"', 'password_character = "\\t"')
+    with pytest.raises(Exception, match="password_character"):
+        config.load_config_from_string(bad)
+
+
+def test_password_character_rejects_double_quote() -> None:
+    """Double quotes in password_character are rejected (break QML string literal)."""
+    bad = SAMPLE_TOML.replace('password_character = "*"', 'password_character = "\\""')
+    with pytest.raises(Exception, match="password_character"):
+        config.load_config_from_string(bad)
+
+
+def test_password_character_accepts_valid_chars() -> None:
+    """Normal mask characters are accepted."""
+    for char in ["●", "•", "*", "x", "ab"]:
+        toml = SAMPLE_TOML.replace(
+            'password_character = "*"',
+            f'password_character = "{char}"',
+        )
+        cfg = config.load_config_from_string(toml)
+        assert cfg.surface.fonts.password_character == char

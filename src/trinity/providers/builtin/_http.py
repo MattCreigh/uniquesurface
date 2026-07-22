@@ -83,10 +83,15 @@ def _is_safe_address(addr: str) -> bool:
 
 
 def _resolve_safely(host: str) -> str:
-    """Resolve ``host`` and assert every returned IP is safe.
+    """Resolve ``host`` and assert *every* returned IP is safe.
 
-    Returns the first safe IP.  Raises ``SSRFError`` if no address is
-    safe or resolution fails.
+    If *any* resolved address is private, loopback, link-local, reserved,
+    multicast, or unspecified, the hostname is rejected.  This prevents
+    DNS rebinding attacks where a hostname resolves to both a public and
+    a private address — the HTTP client may connect to the private one.
+
+    Returns the first safe IP.  Raises ``SSRFError`` if any address is
+    unsafe or resolution fails.
     """
     try:
         infos = socket.getaddrinfo(host, None)
@@ -94,11 +99,23 @@ def _resolve_safely(host: str) -> str:
         raise SSRFError(f"DNS resolution failed for {host!r}: {exc}") from exc
     if not infos:
         raise SSRFError(f"DNS resolution returned no addresses for {host!r}")
+    unsafe: list[str] = []
+    first_safe: str | None = None
     for info in infos:
         addr = info[4][0]
-        if isinstance(addr, str) and _is_safe_address(addr):
-            return addr
-    raise SSRFError(f"host {host!r} resolves only to private/reserved addresses")
+        if not isinstance(addr, str):
+            continue
+        if not _is_safe_address(addr):
+            unsafe.append(addr)
+        elif first_safe is None:
+            first_safe = addr
+    if unsafe:
+        raise SSRFError(
+            f"host {host!r} resolves to unsafe address(es): {', '.join(unsafe)}"
+        )
+    if first_safe is None:
+        raise SSRFError(f"host {host!r} resolved no usable addresses")
+    return first_safe
 
 
 # Module-level hook for the DNS-resolution function.  Production

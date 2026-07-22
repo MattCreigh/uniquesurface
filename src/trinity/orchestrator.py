@@ -7,6 +7,7 @@ service.
 from __future__ import annotations
 
 import os
+from contextlib import contextmanager
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -37,6 +38,51 @@ _log = get_logger(__name__)
 _LOCKSCREEN_QML_NAMES = frozenset(
     {"plasma_lockscreen_ui", "plasma_lockscreen_mainblock"}
 )
+
+
+@contextmanager
+def _noop_lock() -> Any:
+    """No-op context manager for dry runs (no lock needed)."""
+    yield
+
+
+@contextmanager
+def _apply_lock(user_dir: Path) -> Any:
+    """Inter-process lock to serialise concurrent ``trinity apply`` runs.
+
+    Uses ``fcntl.flock`` on a lockfile inside ``user_dir``.  On platforms
+    or filesystems where ``fcntl`` is unavailable, the lock is skipped
+    with a warning (best-effort: a missing lock does not block the user).
+    """
+    try:
+        import fcntl
+    except ImportError:
+        _log.warning(
+            "apply_lock_unavailable",
+            hint="fcntl not available; concurrent apply is not serialized",
+        )
+        yield
+        return
+    lockfile = user_dir / "lock"
+    try:
+        user_dir.mkdir(parents=True, exist_ok=True)
+        fd = os.open(lockfile, os.O_CREAT | os.O_RDWR, 0o644)
+    except OSError as exc:
+        _log.warning("apply_lock_open_failed", error=str(exc))
+        yield
+        return
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    except OSError as exc:
+        _log.warning("apply_lock_acquire_failed", error=str(exc))
+        yield
+    finally:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        except OSError:
+            pass
+        os.close(fd)
 
 
 def default_backends(
@@ -152,18 +198,25 @@ def _restart_display_manager(unit: str, plan: list[str]) -> None:
         plan.append("  systemctl not on PATH; cannot auto-restart")
         return
     # When run as root, invoke systemctl directly.  When run as a
-    # regular user, prefer sudo -n (non-interactive).  The caller has
+    # regular user, prefer pkexec (non-interactive) if available,
+    # then fall back to sudo -n (non-interactive).  The caller has
     # already checked that the user has *some* escalation path; we
     # use the non-interactive form so the command cannot hang waiting
     # for a password prompt in the middle of an apply.
     if os.geteuid() == 0:
         argv = [systemctl, "restart", unit]
     else:
-        sudo = shutil.which("sudo")
-        if sudo is None:
-            plan.append("  sudo not on PATH; cannot auto-restart")
-            return
-        argv = [sudo, "-n", systemctl, "restart", unit]
+        pkexec = shutil.which("pkexec")
+        if pkexec is not None:
+            argv = [pkexec, systemctl, "restart", unit]
+        else:
+            sudo = shutil.which("sudo")
+            if sudo is None:
+                plan.append(
+                    "  no privilege escalation tool on PATH; cannot auto-restart"
+                )
+                return
+            argv = [sudo, "-n", systemctl, "restart", unit]
     try:
         proc = subprocess.run(
             argv,
@@ -197,27 +250,34 @@ def verify_image(data: bytes) -> bytes:
     Returns the (possibly re-encoded) JPEG bytes suitable for use as a
     wallpaper.
     """
+    import warnings
+
+    Image.MAX_IMAGE_PIXELS = 50_000_000  # 50M pixels ≈ 50 MP ceiling
     try:
-        with Image.open(BytesIO(data)) as img:
-            img.load()
-            # Re-encode to strip any non-JPEG/PNG metadata. Choose format
-            # based on the input mode: preserve transparency for images
-            # with an alpha channel; flatten everything else to JPEG
-            # (which does not support alpha and would raise on save).
-            has_alpha = img.mode in ("RGBA", "LA") or (
-                img.mode == "P" and "transparency" in img.info
-            )
-            if has_alpha:
-                fmt = "PNG"
-                save_kwargs: dict[str, object] = {"optimize": True}
-            else:
-                fmt = "JPEG"
-                if img.mode != "RGB":
-                    img = img.convert("RGB")
-                save_kwargs = {"optimize": True, "quality": 90}
-            out = BytesIO()
-            img.save(out, format=fmt, **save_kwargs)
-            return out.getvalue()
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(BytesIO(data)) as img:
+                img.load()
+                # Re-encode to strip any non-JPEG/PNG metadata. Choose format
+                # based on the input mode: preserve transparency for images
+                # with an alpha channel; flatten everything else to JPEG
+                # (which does not support alpha and would raise on save).
+                has_alpha = img.mode in ("RGBA", "LA") or (
+                    img.mode == "P" and "transparency" in img.info
+                )
+                if has_alpha:
+                    fmt = "PNG"
+                    save_kwargs: dict[str, object] = {"optimize": True}
+                else:
+                    fmt = "JPEG"
+                    if img.mode != "RGB":
+                        img = img.convert("RGB")
+                    save_kwargs = {"optimize": True, "quality": 90}
+                out = BytesIO()
+                img.save(out, format=fmt, **save_kwargs)
+                return out.getvalue()
+    except (Image.DecompressionBombError, Image.DecompressionBombWarning) as exc:
+        raise ProviderError(f"image exceeds safe pixel limit: {exc}") from exc
     except (UnidentifiedImageError, OSError, ValueError) as exc:
         raise ProviderError(f"downloaded data is not a valid image: {exc}") from exc
 
@@ -371,12 +431,6 @@ def apply_to_surfaces(
     user_dir = Path(expanded.surface.behaviour.user_dir).expanduser()
     shared_dir = Path(expanded.surface.behaviour.shared_dir)
     # A dry run must leave the filesystem untouched — including these
-    # mkdirs: shared_dir is a system path (default /usr/local/share/
-    # wallpapers) that an unprivileged planning run may not be able to
-    # create.  The writability pre-flight moves with them: it exists to
-    # fail *real* applies early (before the image download), and would
-    # spuriously abort a dry run on hosts where the directory does not
-    # exist yet.
     if not dry_run:
         user_dir.mkdir(parents=True, exist_ok=True)
         shared_dir.mkdir(parents=True, exist_ok=True)
@@ -726,27 +780,44 @@ def apply_to_surfaces(
                 # greeter / lock screen to fall back to the built-in
                 # blue locker.  Fail closed: roll the patched bytes
                 # back via the manifest and surface the error.
-                lint = qmllint_lint_file(path)
-                if not lint.ok:
-                    from trinity.theme import extract as _extract
+                from trinity.theme.qmllint import qmllint_available
 
-                    pristine = _extract.read_pristine(name)
-                    if pristine is not None:
-                        write_tracked(manifest, path, pristine, mode=0o644)
-                    plan.append(
-                        f"QML backend '{name}' LINT FAILED; reverted to pristine"
-                    )
-                    if lint.timed_out:
-                        plan.append("  qmllint timed out (>5s)")
-                    elif lint.stderr.strip():
-                        first_line = lint.stderr.strip().splitlines()[0]
-                        plan.append(f"  qmllint: {first_line}")
-                    _log.warning(
-                        "qml_lint_failed",
+                if (
+                    qmllint_available() is None
+                    and expanded.surface.theme_tokens.skip_qmllint
+                ):
+                    # User explicitly opted out of qmllint validation.
+                    _log.info(
+                        "qml_lint_skipped",
                         backend=name,
-                        stderr=lint.stderr,
-                        stdout=lint.stdout,
+                        hint="skip_qmllint=true; patch applied without validation",
                     )
+                    plan.append(
+                        f"QML backend '{name}' applied (qmllint skipped: "
+                        f"skip_qmllint=true)"
+                    )
+                else:
+                    lint = qmllint_lint_file(path)
+                    if not lint.ok:
+                        from trinity.theme import extract as _extract
+
+                        pristine = _extract.read_pristine(name)
+                        if pristine is not None:
+                            write_tracked(manifest, path, pristine, mode=0o644)
+                        plan.append(
+                            f"QML backend '{name}' LINT FAILED; reverted to pristine"
+                        )
+                        if lint.timed_out:
+                            plan.append("  qmllint timed out (>5s)")
+                        elif lint.stderr.strip():
+                            first_line = lint.stderr.strip().splitlines()[0]
+                            plan.append(f"  qmllint: {first_line}")
+                        _log.warning(
+                            "qml_lint_failed",
+                            backend=name,
+                            stderr=lint.stderr,
+                            stdout=lint.stdout,
+                        )
             except drift.DriftError as exc:
                 if adopt_drift:
                     # Explicit consent: adopt the drifted (stripped)

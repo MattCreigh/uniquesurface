@@ -37,6 +37,16 @@ EntryOp = Literal["write", "delete"]
 # under the daily systemd timer.
 _RETENTION_ENTRIES = 200
 
+# Maximum total size of the snapshots directory (500 MiB).  Older
+# snapshots exceeding this budget are pruned even if the entry count
+# is under ``_RETENTION_ENTRIES``, bounding disk usage under the daily
+# systemd timer.
+_RETENTION_SNAPSHOT_BYTES = 500 * 1024 * 1024
+
+# Snapshots older than this many days are pruned regardless of count or
+# size, so stale snapshots from infrequent users don't linger forever.
+_RETENTION_SNAPSHOT_DAYS = 30
+
 
 @dataclass(frozen=True)
 class ManifestEntry:
@@ -245,12 +255,32 @@ def restore(
     a partial restore rewrites the log keeping only entries with
     ``ts <= to``. Snapshots no longer referenced by any surviving entry
     are pruned in both cases.
+
+    Raises ``FileNotFoundError`` *before* applying any entry if any
+    referenced snapshot is missing, so the restore is transactional —
+    a partial rollback never leaves the system in a half-reverted state.
     """
     entries = list(reversed(manifest.iter_entries()))
     if to is not None:
         entries = [e for e in entries if e.ts > to]
 
     from trinity.atomic import atomic_write_bytes
+
+    # Pre-flight: validate that every write entry that needs a snapshot
+    # has its snapshot file present.  If any are missing, raise *before*
+    # touching any file so the system is not left in a partial rollback.
+    missing: list[str] = []
+    for entry in entries:
+        if entry.op == "write" and entry.prev_bytes_path is not None:
+            if not Path(entry.prev_bytes_path).exists():
+                missing.append(
+                    f"  {entry.path!r} -> missing snapshot {entry.prev_bytes_path!r}"
+                )
+    if missing:
+        raise FileNotFoundError(
+            "manifest references missing snapshots; "
+            "restore aborted before any changes:\n" + "\n".join(missing)
+        )
 
     count = 0
     for entry in entries:
@@ -338,6 +368,65 @@ def _prune_snapshots(
     return deleted
 
 
+def _enforce_snapshot_budget(
+    kept: list[ManifestEntry],
+    *,
+    snapshots_dir: Path | None = None,
+) -> int:
+    """Prune snapshots older than ``_RETENTION_SNAPSHOT_DAYS`` or when
+    the total directory size exceeds ``_RETENTION_SNAPSHOT_BYTES``.
+
+    Never deletes a snapshot that is still referenced by ``kept``.
+    Returns the number of deleted snapshots.
+    """
+    import time
+
+    sdir = snapshots_dir or paths.state_dir() / "manifest_snapshots"
+    if not sdir.is_dir():
+        return 0
+    referenced = _referenced_snapshots(kept)
+    now = time.time()
+    age_cutoff = now - (_RETENTION_SNAPSHOT_DAYS * 86400)
+
+    # Gather snapshots with metadata for age-based and size-based pruning.
+    snaps: list[tuple[float, int, Path]] = []
+    for snap in sdir.iterdir():
+        if not snap.is_file():
+            continue
+        if str(snap) in referenced:
+            continue
+        try:
+            stat = snap.stat()
+        except OSError:
+            continue
+        snaps.append((stat.st_mtime, stat.st_size, snap))
+
+    deleted = 0
+    # First pass: delete snapshots older than the age cutoff.
+    for mtime, _size, snap in snaps:
+        if mtime < age_cutoff:
+            try:
+                snap.unlink()
+                deleted += 1
+            except OSError:
+                pass
+    # Second pass: if total dir size still exceeds the byte budget,
+    # delete oldest unreferenced snapshots until under the cap.
+    remaining = [(m, s, p) for m, s, p in snaps if p.exists()]
+    remaining.sort(key=lambda t: t[0])  # oldest first
+    total = sum(s for _m, s, _p in remaining)
+    for _mtime, size, snap in remaining:
+        if total <= _RETENTION_SNAPSHOT_BYTES:
+            break
+        try:
+            snap.unlink()
+            total -= size
+            deleted += 1
+        except OSError:
+            pass
+    return deleted
+
+
 def compact(manifest: Manifest, *, snapshots_dir: Path | None = None) -> int:
     """Drop oldest entries beyond ``_RETENTION_ENTRIES`` and prune their
     now-unreferenced snapshots.
@@ -347,10 +436,14 @@ def compact(manifest: Manifest, *, snapshots_dir: Path | None = None) -> int:
     under the daily systemd timer.
     """
     entries = manifest.iter_entries()
-    if len(entries) <= _RETENTION_ENTRIES:
-        return 0
-    kept = entries[-_RETENTION_ENTRIES:]
-    dropped = len(entries) - len(kept)
-    _truncate_log(manifest, kept)
+    dropped = 0
+    if len(entries) > _RETENTION_ENTRIES:
+        kept = entries[-_RETENTION_ENTRIES:]
+        dropped = len(entries) - len(kept)
+        _truncate_log(manifest, kept)
+    else:
+        kept = entries
     _prune_snapshots(manifest, kept, snapshots_dir=snapshots_dir)
+    # Also enforce a size and age budget on the snapshots directory.
+    _enforce_snapshot_budget(kept, snapshots_dir=snapshots_dir)
     return dropped

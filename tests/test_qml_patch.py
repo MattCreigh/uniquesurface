@@ -394,3 +394,40 @@ def test_apply_lock_tokens_removes_wake_guard_with_extra_blank_lines() -> None:
     assert "passwordBox.text += event.text;" in new
     # The downstream reapply succeeded → handler_present is True.
     assert present is True
+
+
+# --- deferred descriptor resolution (Phase 3.4) -------------------------
+
+
+def test_module_patterns_initialized_with_fallbacks() -> None:
+    """The module-level pattern constants are initialized with the
+    fallback patterns at import time, without calling detect_plasma_version.
+    """
+    from trinity.theme.qml_patch import (
+        _FADEOUT_TIMER_INTERVAL_RE,
+        _WAKE_GUARD_BLOCK_RE,
+        _WAKE_HANDLER_ANCHOR_RE,
+        _fadeout_fallback_pattern,
+        _wake_anchor_fallback,
+        _wake_guard_block_fallback,
+    )
+
+    # The module-level constants should match the fallback patterns.
+    assert _FADEOUT_TIMER_INTERVAL_RE.pattern == _fadeout_fallback_pattern().pattern
+    assert _WAKE_HANDLER_ANCHOR_RE.pattern == _wake_anchor_fallback().pattern
+    assert _WAKE_GUARD_BLOCK_RE.pattern == _wake_guard_block_fallback().pattern
+
+
+def test_get_pattern_resolves_from_descriptor(monkeypatch: pytest.MonkeyPatch) -> None:
+    """_get_pattern resolves from the descriptor on first access and caches."""
+    from trinity.theme.qml_patch import _get_pattern, _pattern_cache
+
+    _pattern_cache.clear()
+    # With the pinned Plasma version, the descriptor should resolve.
+    pat = _get_pattern("plasma_lockscreen_ui", "fadeout_timer")
+    assert pat is not None
+    # Should be cached.
+    assert "plasma_lockscreen_ui:fadeout_timer:anchor" in _pattern_cache
+    # Second call returns the cached version.
+    pat2 = _get_pattern("plasma_lockscreen_ui", "fadeout_timer")
+    assert pat2 is pat

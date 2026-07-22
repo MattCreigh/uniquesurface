@@ -351,6 +351,11 @@ D2.  adopt(drifted content as baseline)   ↔  explicit consent (--adopt-drift �
 D3.  qmllint fails after patching         →  roll the file back to pristine (fail closed)
 ```
 
+> **qmllint availability:** when `qmllint` is not installed, the
+> fail-closed gate reverts the patch rather than silently accepting it.
+> Set `[surface.theme_tokens] skip_qmllint = true` to bypass at your
+> own risk if you cannot install `qml6-qttools`.
+
 Drift backups are capped at the 3 newest per vendor file. Patch anchors are
 data-driven per Plasma version (`theme/descriptors/`), and a weekly
 [Upstream Canary](.github/workflows/upstream-canary.yml) CI job checks them
@@ -448,7 +453,7 @@ This section is the contract for automated changes. Read it (and
 1. **Never restart the display manager automatically.** Restart requires the explicit `--restart-dm` flag *and* privilege (see gating formula above).
 2. **Never adopt drifted vendor QML silently** (D1–D3 above). Consent is `--adopt-drift` or `qml-update-templates`, nothing else.
 3. **A new wallpaper must be a new URI** (P1–P3). Do not reintroduce fixed-filename overwrites; keep the stable alias resolving at all times.
-4. **All provider HTTP goes through `_http.py`**: HTTPS-only, SSRF pre-flight on every hop, size and redirect caps. XML parsing goes through `defusedxml` only. Images are re-encoded via `verify_image` before touching disk.
+4. **All provider HTTP goes through `_http.py`**: HTTPS-only, SSRF pre-flight on every hop, size and redirect caps. The SSRF pre-flight rejects a hostname if *any* resolved address is private/loopback/link-local/reserved/multicast/unspecified (mixed DNS rebinding defense). XML parsing goes through `defusedxml` only. Images are re-encoded via `verify_image` (with a 50 MP decompression-bomb ceiling) before touching disk.
 5. **Every system write is manifest-tracked** (`write_tracked`) so `restore` stays complete.
 6. **`--if-changed` fails open** (R3). A probe or state problem degrades to a full apply — it must never block the refresh.
 7. **User systemd units must not use capability-dropping directives** (`ProtectClock=`, `ProtectKernelModules=`) — they fail to start under user managers on Ubuntu-24.04-based distros. There is a regression test.

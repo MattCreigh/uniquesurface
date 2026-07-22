@@ -226,46 +226,87 @@ def _resolve_anchor_for(
     return None
 
 
-_FADEOUT_TIMER_INTERVAL_RE: re.Pattern[str] = (
-    _resolve_anchor_for("plasma_lockscreen_ui", "fadeout_timer")
-    or _fadeout_fallback_pattern()
-)
-_WAKE_HANDLER_ANCHOR_RE: re.Pattern[str] = (
-    _resolve_anchor_for("plasma_lockscreen_mainblock", "wake_guard")
-    or _wake_anchor_fallback()
-)
-_WAKE_GUARD_BLOCK_RE: re.Pattern[str] = (
-    _resolve_anchor_for(
+# --- Module-level lazy pattern resolution --------------------------------
+#
+# These were the regex constants tests and other modules reference
+# directly.  They are now initialized with the hardcoded fallback
+# patterns at import time (no ``detect_plasma_version()`` call), and
+# upgraded to the descriptor-resolved patterns on first use via
+# ``_get_pattern``.  This deferring ``detect_plasma_version()`` (which
+# may shell out to ``plasmashell --version``) until the first actual
+# patch operation.
+#
+# ``_reset_descriptor_cache_for_tests`` clears the cache so tests that
+# inject a fake descriptors directory see the change on the next
+# access.
+
+_pattern_cache: dict[str, re.Pattern[str]] = {}
+
+
+def _get_pattern(name: str, kind: str, *, field: str = "anchor") -> re.Pattern[str]:
+    """Return the compiled regex for ``(name, kind, field)``.
+
+    Resolved from the descriptor matching the running Plasma version
+    on first access; cached for subsequent calls.  Falls back to the
+    hardcoded regex if no descriptor matches.
+    """
+    cache_key = f"{name}:{kind}:{field}"
+    if cache_key in _pattern_cache:
+        return _pattern_cache[cache_key]
+    pattern = _resolve_anchor_for(name, kind, field=field)
+    if pattern is None:
+        pattern = _fallback_for(name, kind, field)
+    _pattern_cache[cache_key] = pattern
+    return pattern
+
+
+def _fallback_for(name: str, kind: str, field: str) -> re.Pattern[str]:
+    """Return the hardcoded fallback pattern for ``(name, kind, field)``."""
+    if name == "plasma_lockscreen_ui" and kind == "fadeout_timer":
+        return _fadeout_fallback_pattern()
+    if name == "plasma_lockscreen_mainblock" and kind == "wake_guard":
+        if field == "remove_anchor":
+            return _wake_guard_block_fallback()
+        return _wake_anchor_fallback()
+    # Should not happen — but return a never-matching pattern as a safety net.
+    return re.compile(r"(?!)")
+
+
+# Module-level constants: initialized with fallback patterns (no
+# version detection at import time), upgraded lazily on first use.
+# Other modules (e.g. ``drift.py``) import these directly.
+_FADEOUT_TIMER_INTERVAL_RE: re.Pattern[str] = _fadeout_fallback_pattern()
+_WAKE_HANDLER_ANCHOR_RE: re.Pattern[str] = _wake_anchor_fallback()
+_WAKE_GUARD_BLOCK_RE: re.Pattern[str] = _wake_guard_block_fallback()
+
+
+def _refresh_module_patterns() -> None:
+    """Upgrade the module-level pattern constants from the fallback
+    patterns to the descriptor-resolved patterns (if a matching
+    descriptor exists for the running Plasma version).
+
+    Called on first patch operation and by
+    ``_reset_descriptor_cache_for_tests``.
+    """
+    global _FADEOUT_TIMER_INTERVAL_RE, _WAKE_HANDLER_ANCHOR_RE, _WAKE_GUARD_BLOCK_RE
+    _FADEOUT_TIMER_INTERVAL_RE = _get_pattern("plasma_lockscreen_ui", "fadeout_timer")
+    _WAKE_HANDLER_ANCHOR_RE = _get_pattern("plasma_lockscreen_mainblock", "wake_guard")
+    _WAKE_GUARD_BLOCK_RE = _get_pattern(
         "plasma_lockscreen_mainblock", "wake_guard", field="remove_anchor"
     )
-    or _wake_guard_block_fallback()
-)
 
 
 def _reset_descriptor_cache_for_tests() -> None:
     """Drop the descriptor cache so tests that injected a different
-    descriptor set see the change on the next ``_resolve_anchor_for``
-    call.  Also re-resolves the module-level alias constants so the
-    hardcoded-fallback vs. descriptor branch is observable in tests.
+    descriptor set see the change on the next access.  Also clears the
+    lazy pattern cache and re-resolves the module-level constants so
+    the hardcoded-fallback vs. descriptor branch is observable.
     """
     from trinity.theme.descriptors import _reset_cache_for_tests
 
     _reset_cache_for_tests()
-    global _FADEOUT_TIMER_INTERVAL_RE, _WAKE_HANDLER_ANCHOR_RE, _WAKE_GUARD_BLOCK_RE
-    _FADEOUT_TIMER_INTERVAL_RE = (
-        _resolve_anchor_for("plasma_lockscreen_ui", "fadeout_timer")
-        or _fadeout_fallback_pattern()
-    )
-    _WAKE_HANDLER_ANCHOR_RE = (
-        _resolve_anchor_for("plasma_lockscreen_mainblock", "wake_guard")
-        or _wake_anchor_fallback()
-    )
-    _WAKE_GUARD_BLOCK_RE = (
-        _resolve_anchor_for(
-            "plasma_lockscreen_mainblock", "wake_guard", field="remove_anchor"
-        )
-        or _wake_guard_block_fallback()
-    )
+    _pattern_cache.clear()
+    _refresh_module_patterns()
 
 
 def _ensure_sentinels(text: str, block: str) -> str:
@@ -521,7 +562,7 @@ def _apply_wake_guard(text: str, *, enable: bool) -> tuple[str, bool]:
     if enable:
         if has_guard:
             return text, True
-        m = _WAKE_HANDLER_ANCHOR_RE.search(text)
+        m = _get_pattern("plasma_lockscreen_mainblock", "wake_guard").search(text)
         if m is None:
             return text, False
         indent = m.group(2)
@@ -539,7 +580,9 @@ def _apply_wake_guard(text: str, *, enable: bool) -> tuple[str, bool]:
         # blocks. Descriptor-driven ``remove_anchor`` is kept for
         # back-compat in the schema but ignored at runtime.
         return _strip_wake_guard_block(text), True
-    return text, _WAKE_HANDLER_ANCHOR_RE.search(text) is not None
+    return text, _get_pattern("plasma_lockscreen_mainblock", "wake_guard").search(
+        text
+    ) is not None
 
 
 def apply_lock_tokens(
@@ -580,7 +623,7 @@ def apply_lock_tokens(
 
     # Rewrite the fadeoutTimer interval: seconds → milliseconds.
     interval_ms = patch.on_idle_dim_seconds * 1000
-    new_text, n_timer = _FADEOUT_TIMER_INTERVAL_RE.subn(
+    new_text, n_timer = _get_pattern("plasma_lockscreen_ui", "fadeout_timer").subn(
         rf"\g<1>{interval_ms}", text, count=1
     )
 

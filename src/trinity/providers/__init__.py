@@ -319,7 +319,12 @@ def validate_provider_options(
     Raises ``ValueError`` with a clear message naming the provider and
     the offending field(s) if validation fails.
     """
-    schema_cls = get_provider_options_schema(pm, source.provider)
+    try:
+        schema_cls = get_provider_options_schema(pm, source.provider)
+    except KeyError:
+        raise ValueError(
+            f"unknown provider '{source.provider}'; run 'trinity provider list'"
+        ) from None
     if schema_cls is None:
         # Third-party provider without a schema hook: fall back to the
         # permissive behaviour (all keys accepted, no validation).
@@ -351,7 +356,12 @@ def validate_provider_options(
 
 def fetch_from_source(pm: pluggy.PluginManager, source: Source) -> FetchedImage:
     """Dispatch ``source`` to the appropriate provider and return bytes."""
-    plugin = get_provider(pm, source.provider)
+    try:
+        plugin = get_provider(pm, source.provider)
+    except KeyError:
+        raise ProviderError(
+            f"unknown provider '{source.provider}'; run 'trinity provider list'"
+        ) from None
     # Try schema-validated options first; fall back to raw dump if the
     # provider has no schema (backward-compatible).
     validated = validate_provider_options(pm, source)
@@ -367,7 +377,12 @@ def probe_from_source(pm: pluggy.PluginManager, source: Source) -> str | None:
     failures propagate as :class:`ProviderError` — callers decide
     whether a failed probe blocks or degrades to a full fetch.
     """
-    plugin = get_provider(pm, source.provider)
+    try:
+        plugin = get_provider(pm, source.provider)
+    except KeyError:
+        raise ProviderError(
+            f"unknown provider '{source.provider}'; run 'trinity provider list'"
+        ) from None
     validated = validate_provider_options(pm, source)
     options = validated if validated is not None else dict(source.options.model_dump())
     return _call_probe(plugin, options)

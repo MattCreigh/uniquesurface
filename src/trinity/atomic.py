@@ -115,7 +115,7 @@ def _direct_overwrite(src: Path, dest: Path) -> None:
     """Copy ``src`` over ``dest`` as a last-resort, non-atomic fallback."""
     try:
         shutil.copy2(str(src), str(dest))
-    except OSError:
+    except OSError as exc:
         # If copy fails because dest is not writable, re-raise with a
         # helpful message naming the real destination path.
         raise PermissionError(
@@ -123,7 +123,7 @@ def _direct_overwrite(src: Path, dest: Path) -> None:
             f"Permission denied writing to {dest}. "
             f"If you previously ran trinity with sudo, run: "
             f"sudo chown -R $USER:$USER {dest.parent}",
-        ) from None
+        ) from exc
     finally:
         try:
             src.unlink()

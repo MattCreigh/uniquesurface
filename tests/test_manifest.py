@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
+
+import pytest
 
 from trinity import manifest
 
@@ -264,3 +267,91 @@ def test_compaction_keeps_newest_n_entries(tmp_path: Path) -> None:
     for e in kept:
         if e.prev_bytes_path is not None:
             assert Path(e.prev_bytes_path).exists()
+
+
+# --- transactional restore (Phase 2.2) ----------------------------------
+
+
+def test_restore_raises_on_missing_snapshot_before_any_changes(tmp_path: Path) -> None:
+    """Restore aborts *before* applying any changes if a referenced
+    snapshot is missing — the system is not left in a partial rollback."""
+    log = tmp_path / "manifest.jsonl"
+    snaps = tmp_path / "snaps"
+    m = manifest.Manifest(log)
+    # Write a file, tracking it in the manifest.
+    target = tmp_path / "file.txt"
+    target.write_bytes(b"seed")
+    manifest.write_tracked(m, target, b"new content", snapshots_dir=snaps)
+    assert target.read_bytes() == b"new content"
+    # Delete the snapshot so restore cannot find it.
+    entries = m.iter_entries()
+    assert len(entries) == 1
+    snap_path = Path(entries[0].prev_bytes_path)
+    assert snap_path.exists()
+    snap_path.unlink()
+    # Restore should raise FileNotFoundError, not partially revert.
+    with pytest.raises(FileNotFoundError, match="missing snapshot"):
+        manifest.restore(m, snapshots_dir=snaps)
+    # The file should still have the new content (restore was aborted).
+    assert target.read_bytes() == b"new content"
+
+
+# --- snapshot budget (Phase 3.1) ---------------------------------------
+
+
+def test_snapshot_age_pruning(tmp_path: Path) -> None:
+    """Snapshots older than the retention period are pruned even when
+    the entry count is under the threshold."""
+    import time
+
+    log = tmp_path / "manifest.jsonl"
+    snaps = tmp_path / "snaps"
+    m = manifest.Manifest(log)
+    target = tmp_path / "thing.bin"
+    target.write_bytes(b"seed")
+    manifest.write_tracked(m, target, b"v1", snapshots_dir=snaps)
+    # Make the snapshot look old.
+    for snap in snaps.iterdir():
+        old_time = time.time() - (manifest._RETENTION_SNAPSHOT_DAYS * 86400 + 3600)
+        os.utime(snap, (old_time, old_time))
+    # Compact should prune the old snapshot (it's not referenced after
+    # compaction since the entry that referenced it has no previous
+    # snapshot — wait, actually the entry's prev_bytes_path points to
+    # the snapshot, so it IS referenced. Let's create an unreferenced
+    # old snapshot instead.)
+    # Create an unreferenced old snapshot
+    stale_snap = snaps / "stale.bin"
+    stale_snap.write_bytes(b"old data")
+    old_time = time.time() - (manifest._RETENTION_SNAPSHOT_DAYS * 86400 + 3600)
+    os.utime(stale_snap, (old_time, old_time))
+    manifest.compact(m, snapshots_dir=snaps)
+    assert not stale_snap.exists()
+
+
+def test_snapshot_size_pruning(tmp_path: Path) -> None:
+    """When the snapshots directory exceeds the size budget, oldest
+    unreferenced snapshots are pruned."""
+    import time
+
+    log = tmp_path / "manifest.jsonl"
+    snaps = tmp_path / "snaps"
+    m = manifest.Manifest(log)
+    # Create unreferenced snapshots that exceed the size budget.
+    snaps.mkdir(parents=True, exist_ok=True)
+    for i in range(5):
+        s = snaps / f"big_{i}.bin"
+        s.write_bytes(b"x" * 200)  # 5 * 200 = 1000 bytes total
+        # Make them progressively older
+        old_time = time.time() - (i * 100)
+        os.utime(s, (old_time, old_time))
+    # Temporarily lower the budget to trigger pruning
+    original_budget = manifest._RETENTION_SNAPSHOT_BYTES
+    manifest._RETENTION_SNAPSHOT_BYTES = 500
+    try:
+        manifest.compact(m, snapshots_dir=snaps)
+        # Should have pruned enough to get under 500 bytes
+        remaining = list(snaps.iterdir())
+        total_size = sum(p.stat().st_size for p in remaining if p.is_file())
+        assert total_size <= 500
+    finally:
+        manifest._RETENTION_SNAPSHOT_BYTES = original_budget

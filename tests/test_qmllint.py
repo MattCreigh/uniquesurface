@@ -123,11 +123,16 @@ def test_qmllint_available_caches_its_result(
 def test_lint_file_returns_ok_when_linter_missing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """If qmllint is absent, ``lint_file`` returns ok=True (no-op)."""
+    """If qmllint is absent, ``lint_file`` returns ok=False (fail-closed).
+
+    The fail-closed gate in the orchestrator then reverts the patch
+    unless ``skip_qmllint`` is explicitly set in the config.
+    """
     monkeypatch.setattr(shutil, "which", lambda name: None)
     result = lint_file(tmp_path / "Login.qml")
-    assert result.ok is True
+    assert result.ok is False
     assert result.timed_out is False
+    assert "qmllint not found" in result.stderr
 
 
 def test_lint_file_passes_clean_qml(
@@ -246,3 +251,18 @@ def test_qml_lint_result_is_frozen() -> None:
     r = QmlLintResult(ok=True, stdout="", stderr="", timed_out=False)
     with pytest.raises((AttributeError, Exception)):
         r.ok = False  # type: ignore[misc]
+
+
+# --- qmllint fail-closed gate (Phase 1.5) -------------------------------
+
+
+def test_lint_file_missing_qmllint_returns_ok_false_with_hint(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """When qmllint is missing, lint_file returns ok=False with a
+    helpful stderr message mentioning skip_qmllint."""
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+    result = lint_file(tmp_path / "Login.qml")
+    assert result.ok is False
+    assert "skip_qmllint" in result.stderr
+    assert "qmllint not found" in result.stderr

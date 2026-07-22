@@ -169,6 +169,10 @@ mkt = "en-US"
 [surface.behaviour]
 shared_dir = "{shared}"
 user_dir = "{user_state}"
+
+[surface.theme_tokens]
+enabled = true
+skip_qmllint = true
 """
     )
 

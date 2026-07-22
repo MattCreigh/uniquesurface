@@ -800,3 +800,84 @@ def test_apply_with_unknown_plasma_version(
     plan = apply_to_surfaces(cfg, manifest=Manifest(), dry_run=False)
     out = "\n".join(plan)
     assert "skipped" in out.lower() or "unknown" in out.lower()
+
+
+# --- decompression-bomb guard (Phase 1.4) -------------------------------
+
+
+def test_verify_image_decompression_bomb_error() -> None:
+    """A DecompressionBombError from Pillow surfaces as ProviderError with
+    'exceeds safe pixel limit' in the message."""
+    from unittest.mock import patch
+
+    from PIL import Image
+
+    from trinity.orchestrator import verify_image
+    from trinity.providers import ProviderError
+
+    with patch.object(
+        Image, "open", side_effect=Image.DecompressionBombError("too big")
+    ):
+        with pytest.raises(ProviderError, match="exceeds safe pixel limit"):
+            verify_image(b"fake")
+
+
+def test_verify_image_decompression_bomb_warning() -> None:
+    """A DecompressionBombWarning (promoted to error by simplefilter)
+    surfaces as ProviderError with 'exceeds safe pixel limit'."""
+    from unittest.mock import patch
+
+    from PIL import Image
+
+    from trinity.orchestrator import verify_image
+    from trinity.providers import ProviderError
+
+    with patch.object(
+        Image, "open", side_effect=Image.DecompressionBombWarning("too big")
+    ):
+        with pytest.raises(ProviderError, match="exceeds safe pixel limit"):
+            verify_image(b"fake")
+
+
+# --- inter-process lock (Phase 2.1) ------------------------------------
+
+
+def test_apply_lock_acquires_flock(tmp_path: Path) -> None:
+    """The inter-process lock is acquired during a non-dry-run apply."""
+    import fcntl
+
+    from trinity.orchestrator import _apply_lock
+
+    lock_dir = tmp_path / "state"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    lockfile = lock_dir / "lock"
+
+    # Acquire the lock and verify the lockfile is created.
+    with _apply_lock(lock_dir):
+        assert lockfile.exists()
+        # Try to acquire the same lock non-blocking — should fail.
+        fd = os.open(lockfile, os.O_RDWR)
+        try:
+            with pytest.raises(OSError, match="Resource temporarily unavailable"):
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        finally:
+            os.close(fd)
+    # After the context exits, the lock should be released.
+    fd = os.open(lockfile, os.O_RDWR)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)  # should succeed
+        fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
+
+
+def test_apply_lock_noop_for_dry_run(tmp_path: Path) -> None:
+    """The noop lock does not create a lockfile."""
+    from trinity.orchestrator import _noop_lock
+
+    lock_dir = tmp_path / "state"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    with _noop_lock():
+        pass
+    # No lockfile should have been created.
+    assert not (lock_dir / "lock").exists()

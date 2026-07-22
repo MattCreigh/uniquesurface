@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import socket
 from pathlib import Path
 
 import httpx
@@ -851,7 +852,104 @@ def test_http_is_safe_address_allows_public() -> None:
     assert _http._is_safe_address("2606:2800:220:1:248:1893:25c8:1946") is True
 
 
-# --- hypothesis property test for resolve_pointer ---------------------
+# --- SSRF mixed-DNS regression (Phase 1.3) ------------------------------
+
+
+def test_resolve_safely_rejects_mixed_private_and_public(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A hostname resolving to both a private and a public address is
+    rejected — the HTTP client may connect to the private one.
+    """
+    from trinity.providers.builtin import _http
+    from trinity.providers.builtin._http import SSRFError
+
+    # Simulate getaddrinfo returning both 127.0.0.1 and 1.1.1.1
+    original_getaddrinfo = _http.socket.getaddrinfo
+
+    def fake_getaddrinfo(host, port, *args, **kwargs):  # type: ignore[no-untyped-def]
+        if host == "evil.example.com":
+            return [
+                (
+                    socket.AF_INET,
+                    socket.SOCK_STREAM,
+                    0,
+                    "",
+                    ("127.0.0.1", port),
+                ),
+                (
+                    socket.AF_INET,
+                    socket.SOCK_STREAM,
+                    0,
+                    "",
+                    ("1.1.1.1", port),
+                ),
+            ]
+        return original_getaddrinfo(host, port, *args, **kwargs)
+
+    monkeypatch.setattr(_http.socket, "getaddrinfo", fake_getaddrinfo)
+    with pytest.raises(SSRFError, match="unsafe address"):
+        _http._resolve_safely("evil.example.com")
+
+
+def test_resolve_safely_accepts_all_public(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A hostname resolving only to public addresses is accepted."""
+    from trinity.providers.builtin import _http
+
+    original_getaddrinfo = _http.socket.getaddrinfo
+
+    def fake_getaddrinfo(host, port, *args, **kwargs):  # type: ignore[no-untyped-def]
+        if host == "good.example.com":
+            return [
+                (
+                    socket.AF_INET,
+                    socket.SOCK_STREAM,
+                    0,
+                    "",
+                    ("1.1.1.1", port),
+                ),
+                (
+                    socket.AF_INET,
+                    socket.SOCK_STREAM,
+                    0,
+                    "",
+                    ("8.8.8.8", port),
+                ),
+            ]
+        return original_getaddrinfo(host, port, *args, **kwargs)
+
+    monkeypatch.setattr(_http.socket, "getaddrinfo", fake_getaddrinfo)
+    result = _http._resolve_safely("good.example.com")
+    assert result in ("1.1.1.1", "8.8.8.8")
+
+
+def test_resolve_safely_rejects_ipv4_mapped_ipv6_private(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An IPv4-mapped IPv6 address that maps to a private IPv4 is rejected."""
+    from trinity.providers.builtin import _http
+    from trinity.providers.builtin._http import SSRFError
+
+    original_getaddrinfo = _http.socket.getaddrinfo
+
+    def fake_getaddrinfo(host, port, *args, **kwargs):  # type: ignore[no-untyped-def]
+        if host == "mapped.example.com":
+            return [
+                (
+                    socket.AF_INET6,
+                    socket.SOCK_STREAM,
+                    0,
+                    "",
+                    ("::ffff:10.0.0.1", port),
+                ),
+            ]
+        return original_getaddrinfo(host, port, *args, **kwargs)
+
+    monkeypatch.setattr(_http.socket, "getaddrinfo", fake_getaddrinfo)
+    with pytest.raises(SSRFError, match="unsafe address"):
+        _http._resolve_safely("mapped.example.com")
 
 
 def test_resolve_pointer_property() -> None:
@@ -1087,6 +1185,29 @@ def test_rss_unsupported_root_raises(respx_mock: respx.router.MockRouter) -> Non
     )
     with pytest.raises(ProviderError, match="unsupported feed root"):
         rss.fetch({"url": _FEED_URL})
+
+
+# --- unknown provider crash regression (Phase 1.2) ---------------------
+
+
+def test_validate_provider_options_unknown_provider_raises_valueerror() -> None:
+    """An unknown provider name raises ValueError (not KeyError) with a
+    clear hint pointing to 'trinity provider list'."""
+    from trinity.providers import validate_provider_options
+
+    pm = make_plugin_manager()
+    source = Source(provider="nonexistent", options=SourceOptions())
+    with pytest.raises(ValueError, match="unknown provider"):
+        validate_provider_options(pm, source)
+
+
+def test_fetch_from_source_unknown_provider_raises_provider_error() -> None:
+    """An unknown provider name raises ProviderError (not KeyError) with a
+    clear hint pointing to 'trinity provider list'."""
+    pm = make_plugin_manager()
+    source = Source(provider="nonexistent", options=SourceOptions())
+    with pytest.raises(ProviderError, match="unknown provider"):
+        fetch_from_source(pm, source)
 
 
 # --- change probes (apply --if-changed) ---------------------------------

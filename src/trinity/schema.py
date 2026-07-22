@@ -126,6 +126,30 @@ class Fonts(_StrictModel):
             )
         return value
 
+    @field_validator("password_character")
+    @classmethod
+    def _check_password_character(cls, value: str) -> str:
+        """Reject control characters, newlines, tabs, and double quotes.
+
+        The value lands inside a QML double-quoted string literal, so
+        characters that break the literal (double quotes, backslashes
+        that form escape sequences unexpectedly) or control characters
+        (which produce invisible/unpredictable rendering) are rejected.
+        """
+        for ch in value:
+            code = ord(ch)
+            if code < 0x20 or code == 0x7F:
+                raise ValueError(
+                    f"password_character {value!r} contains control character "
+                    f"(U+{code:04X})"
+                )
+            if ch in ("\n", "\r", "\t", '"', "\\"):
+                raise ValueError(
+                    f"password_character {value!r} contains character "
+                    f"'{ch}' which would break generated QML"
+                )
+        return value
+
 
 class Login(_StrictModel):
     """Login-screen specific tokens.
@@ -211,6 +235,15 @@ class ThemeTokens(_StrictModel):
         description=(
             "Enable QML patching and drift detection. Default false: the "
             "simple wallpaper-sync use case skips this fragile machinery."
+        ),
+    )
+    skip_qmllint: bool = Field(
+        default=False,
+        description=(
+            "Skip qmllint post-patch validation. Use at your own risk — "
+            "a QML syntax error would cause the greeter to fall back to the "
+            "built-in blue locker. Only set this if qmllint is unavailable "
+            "and you accept the risk."
         ),
     )
 
