@@ -717,6 +717,8 @@ def apply_to_surfaces(
             )
             if vendor_path.is_file():
                 plan.append(f"patch QML {name} ({path}) with font/theme tokens")
+                if expanded.surface.theme_tokens.clock_position.enabled:
+                    plan.append(f"patch clock position ({path})")
     else:
         from trinity.backends import sddm_fork
         from trinity.theme import drift
@@ -729,6 +731,7 @@ def apply_to_surfaces(
         from trinity.theme.qml_patch import (
             FontPatch,
             LockPatch,
+            apply_clock_position_tokens,
             apply_font_tokens,
             apply_lock_tokens,
         )
@@ -810,6 +813,20 @@ def apply_to_surfaces(
                     )
                     plan.append(f"QML lock '{name}': {lmsg}")
 
+                if expanded.surface.theme_tokens.clock_position.enabled:
+                    clock_id = descriptor.clock_id
+                    text_before = path.read_text(encoding="utf-8", errors="replace")
+                    clock_text, clock_msg = apply_clock_position_tokens(
+                        text=text_before,
+                        clock_id=clock_id,
+                        position=expanded.surface.theme_tokens.clock_position,
+                    )
+                    if clock_text != text_before:
+                        write_tracked(
+                            manifest, path, clock_text.encode("utf-8"), mode=0o644
+                        )
+                    plan.append(f"QML clock '{name}': {clock_msg}")
+
                 # Post-patch qmllint validation: a QML syntax error
                 # introduced by a trinity patch would cause the SDDM
                 # greeter / lock screen to fall back to the built-in
@@ -889,6 +906,20 @@ def apply_to_surfaces(
                             patch=lock_patch,
                         )
                         plan.append(f"QML lock '{name}': {lmsg}")
+
+                    if expanded.surface.theme_tokens.clock_position.enabled:
+                        clock_id = descriptor.clock_id
+                        text_before = path.read_text(encoding="utf-8", errors="replace")
+                        clock_text, clock_msg = apply_clock_position_tokens(
+                            text=text_before,
+                            clock_id=clock_id,
+                            position=expanded.surface.theme_tokens.clock_position,
+                        )
+                        if clock_text != text_before:
+                            write_tracked(
+                                manifest, path, clock_text.encode("utf-8"), mode=0o644
+                            )
+                        plan.append(f"QML clock '{name}': {clock_msg}")
                 else:
                     # Drifted vendor file: skip patching but keep going
                     # so other surfaces still apply. The user must

@@ -219,6 +219,10 @@ class QmlDescriptor(BaseModel):
         default_factory=list,
         description=("Optional list of exact Plasma versions to exclude."),
     )
+    clock_id: str = Field(
+        default="clock",
+        description=("The QML id of the clock item to apply position edits to."),
+    )
     patches: list[ManagedPatch] = Field(
         default_factory=list,
         description=(

@@ -30,6 +30,7 @@
 name = "plasma_lockscreen_ui"
 description = "Plasma 6 lockscreen LockScreenUi.qml — fadeout timer interval"
 plasma = ">=6.0,<6.8"
+clock_id = "clock"
 
 [[patches]]
 kind = "fadeout_timer"

@@ -30,6 +30,7 @@
 name = "plasma_lockscreen_mainblock"
 description = "Plasma 6 lockscreen MainBlock.qml — wake-keypress guard"
 plasma = ">=6.0,<6.8"
+clock_id = "timeLabel"
 
 [[patches]]
 kind = "wake_guard"

@@ -24,6 +24,7 @@
 name = "sddm_login"
 description = "SDDM Breeze Login.qml — Plasma 6.0–6.7"
 plasma = ">=6.0,<6.8"
+clock_id = "clock"
 
 [[patches]]
 kind = "font_property"
