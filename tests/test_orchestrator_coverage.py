@@ -839,6 +839,24 @@ def test_verify_image_decompression_bomb_warning() -> None:
             verify_image(b"fake")
 
 
+def test_verify_image_restores_max_image_pixels() -> None:
+    """verify_image restores PIL.Image.MAX_IMAGE_PIXELS to its original value."""
+    from PIL import Image
+    from trinity.orchestrator import verify_image
+    from trinity.providers import ProviderError
+
+    original_limit = Image.MAX_IMAGE_PIXELS
+    try:
+        Image.MAX_IMAGE_PIXELS = 12345
+        try:
+            verify_image(b"fake")
+        except ProviderError:
+            pass
+        assert Image.MAX_IMAGE_PIXELS == 12345
+    finally:
+        Image.MAX_IMAGE_PIXELS = original_limit
+
+
 # --- inter-process lock (Phase 2.1) ------------------------------------
 
 

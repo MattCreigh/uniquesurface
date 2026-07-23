@@ -252,6 +252,7 @@ def verify_image(data: bytes) -> bytes:
     """
     import warnings
 
+    orig_max_pixels = getattr(Image, "MAX_IMAGE_PIXELS", None)
     Image.MAX_IMAGE_PIXELS = 50_000_000  # 50M pixels ≈ 50 MP ceiling
     try:
         with warnings.catch_warnings():
@@ -280,6 +281,9 @@ def verify_image(data: bytes) -> bytes:
         raise ProviderError(f"image exceeds safe pixel limit: {exc}") from exc
     except (UnidentifiedImageError, OSError, ValueError) as exc:
         raise ProviderError(f"downloaded data is not a valid image: {exc}") from exc
+    finally:
+        if orig_max_pixels is not None:
+            Image.MAX_IMAGE_PIXELS = orig_max_pixels
 
 
 def fetch_wallpaper(config: Config, pm: Any = None) -> FetchedImage:
