@@ -779,3 +779,37 @@ def test_setup_chains_init_install_dryrun_apply(
     # expect the install and two apply calls (dry-run + real).
     assert "install" in calls
     assert calls.count("apply") == 2  # dry-run + real apply
+
+
+def test_apply_expands_user_dir_with_env_var(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """trinity apply correctly expands environment variables in user_dir lock path."""
+    cfg_dir = tmp_path / "xdg_config" / "trinity"
+    cfg_dir.mkdir(parents=True)
+    shared = str(tmp_path / "shared")
+    monkeypatch.setenv("MY_TEST_VAR", str(tmp_path / "expanded_user"))
+    config_path = cfg_dir / "config.toml"
+    config_path.write_text(
+        f"""[surface]
+schema_version = 1
+[surface.source]
+provider = "solid"
+[surface.behaviour]
+shared_dir = "{shared}"
+user_dir = "$MY_TEST_VAR/lock_test"
+"""
+    )
+
+    from trinity import paths
+    monkeypatch.setattr(paths, "config_file", lambda: config_path)
+    monkeypatch.setattr(paths, "manifest_file", lambda: tmp_path / "manifest.jsonl")
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["apply", "--dry-run"])
+    assert result.exit_code == 0
+    result = runner.invoke(main, ["apply"])
+    assert result.exit_code == 0
+    expected_path = tmp_path / "expanded_user" / "lock_test"
+    assert expected_path.exists()

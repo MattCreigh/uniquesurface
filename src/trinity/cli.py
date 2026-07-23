@@ -264,7 +264,10 @@ def apply(
     manifest = Manifest()
     from trinity.orchestrator import _apply_lock, _noop_lock
 
-    user_dir = Path(cfg.surface.behaviour.user_dir).expanduser()
+    from trinity.config import expand_behaviour_paths
+
+    expanded = expand_behaviour_paths(cfg)
+    user_dir = Path(expanded.surface.behaviour.user_dir)
     lock_cm = _apply_lock(user_dir) if not dry_run else _noop_lock()
     with lock_cm:
         try:
