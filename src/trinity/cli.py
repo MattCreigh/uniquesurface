@@ -262,9 +262,8 @@ def apply(
     from trinity.providers import ProviderError
 
     manifest = Manifest()
-    from trinity.orchestrator import _apply_lock, _noop_lock
-
     from trinity.config import expand_behaviour_paths
+    from trinity.orchestrator import _apply_lock, _noop_lock
 
     expanded = expand_behaviour_paths(cfg)
     user_dir = Path(expanded.surface.behaviour.user_dir)

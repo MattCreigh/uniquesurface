@@ -842,6 +842,7 @@ def test_verify_image_decompression_bomb_warning() -> None:
 def test_verify_image_restores_max_image_pixels() -> None:
     """verify_image restores PIL.Image.MAX_IMAGE_PIXELS to its original value."""
     from PIL import Image
+
     from trinity.orchestrator import verify_image
     from trinity.providers import ProviderError
 
