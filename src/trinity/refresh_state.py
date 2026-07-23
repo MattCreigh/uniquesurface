@@ -57,17 +57,6 @@ def source_fingerprint(provider: str, options: dict[str, Any]) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def cycle_token(provider: str, options: dict[str, Any], offset: int) -> str:
-    """Compound token combining the provider fingerprint + temporal offset.
-
-    The ``--if-changed`` timer uses this so a manual ``trinity cycle``
-    (which changes the offset but not the config) is not clobbered by
-    the next hourly run — the compound token differs until the user
-    cycles again or the upstream master image changes.
-    """
-    base = source_fingerprint(provider, options)
-    return f"{base}:{offset}"
-
 
 def now_iso() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")

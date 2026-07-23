@@ -83,16 +83,6 @@ def test_refresh_state_temporal_offset_round_trip(tmp_path: Path) -> None:
     assert loaded.temporal_offset == 3
 
 
-def test_cycle_token_combines_fingerprint_and_offset() -> None:
-    """cycle_token combines the provider fingerprint + offset."""
-    from trinity.refresh_state import cycle_token, source_fingerprint
-
-    base = source_fingerprint("bing", {"mkt": "en-US"})
-    token = cycle_token("bing", {"mkt": "en-US"}, 3)
-    assert token == f"{base}:3"
-    token2 = cycle_token("bing", {"mkt": "en-US"}, 5)
-    assert token2 != token
-
 
 # --- orchestrator with temporal_offset ---------------------------------
 
