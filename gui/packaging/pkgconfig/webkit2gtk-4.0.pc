@@ -1,0 +1,7 @@
+# Compatibility shim: KDE Neon / Ubuntu 24.04 ships only webkit2gtk-4.1,
+# but webview_go's cgo directive asks for webkit2gtk-4.0. The two are
+# API-compatible for webview's usage, so delegate 4.0 -> 4.1.
+Name: webkit2gtk-4.0
+Description: shim delegating webkit2gtk-4.0 to webkit2gtk-4.1
+Version: 2.52.3
+Requires: webkit2gtk-4.1

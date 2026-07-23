@@ -4,6 +4,12 @@ All notable changes to `trinity` are documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/) and this project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- **GUI runs in a native window instead of the browser.** `trinity-gui` now renders its UI in a native WebKitGTK window (via `webview_go`) rather than shelling out to the default browser, so it no longer opens as a Chrome tab. It still falls back to the system browser on a headless/no-display session. All of the 0.3.1 hardening (bearer token, `Host` check, POST-only, timeouts) is unchanged. `make install` installs the binary to `~/.local/bin` and a KDE `.desktop` launcher to `~/.local/share/applications`. Build deps: `golang-go`, `libwebkit2gtk-4.1-dev`, `libgtk-3-dev`; a pkg-config shim in `gui/packaging/pkgconfig` maps webkit2gtk-4.0 → 4.1 for Ubuntu 24.04 / KDE Neon.
+
 ## [0.3.1] — 2026-07-23
 
 Golden-master remediation release: closes the defects found in the

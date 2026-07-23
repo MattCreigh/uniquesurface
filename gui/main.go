@@ -9,9 +9,12 @@ import (
 	"net"
 	"net/http"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
+
+	webview "github.com/webview/webview_go"
 )
 
 // apiResponse is the common JSON envelope returned by every endpoint.
@@ -143,6 +146,10 @@ func tokenValidationMiddleware(token string, next http.Handler) http.Handler {
 }
 
 func main() {
+	// The native WebKitGTK window must own the main OS thread (GTK
+	// requirement), so pin the main goroutine to it.
+	runtime.LockOSThread()
+
 	// Generate random 16-byte hex token for bearer auth
 	tokenBytes := make([]byte, 16)
 	if _, err := rand.Read(tokenBytes); err != nil {
@@ -195,8 +202,6 @@ func main() {
 	log.Printf("Trinity GUI Bearer Token: %s", bearerToken)
 	log.Printf("Trinity GUI listening on %s", urlStr)
 
-	go openBrowser(urlStr)
-
 	server := &http.Server{
 		Handler:           hostValidationMiddleware(port, tokenValidationMiddleware(bearerToken, mux)),
 		ReadHeaderTimeout: 5 * time.Second,
@@ -205,7 +210,42 @@ func main() {
 		IdleTimeout:       60 * time.Second,
 	}
 
-	if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
-		log.Fatalf("server error: %v", err)
+	// Serve in the background; the native window owns the main thread.
+	go func() {
+		if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("server error: %v", err)
+		}
+	}()
+
+	// Render the UI in a native WebKitGTK window — no external browser.
+	// If a window cannot be created (e.g. a headless/SSH session with no
+	// display), fall back to the system browser so the GUI stays reachable.
+	if !openWebview(urlStr) {
+		log.Printf("no native display available; falling back to the system browser")
+		openBrowser(urlStr)
+		select {} // keep serving until the process is killed
 	}
+}
+
+// openWebview renders the GUI in a native WebKitGTK window. It returns
+// false if a window could not be created (e.g. no display), so the caller
+// can fall back to a browser. The window owns the calling (main) thread
+// until the user closes it, at which point the process exits.
+func openWebview(rawURL string) (ok bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("native window unavailable: %v", r)
+			ok = false
+		}
+	}()
+	w := webview.New(false)
+	if w == nil {
+		return false
+	}
+	defer w.Destroy()
+	w.SetTitle("Trinity Wallpaper Manager")
+	w.SetSize(920, 720, webview.HintNone)
+	w.Navigate(rawURL)
+	w.Run()
+	return true
 }
