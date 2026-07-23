@@ -47,6 +47,9 @@ def install_network_dispatcher_script(
     Raises ``PermissionError`` if the dispatcher directory cannot be
     written (e.g. not running as root).
     """
+    import re
+    if not re.match(r"^[a-z_][a-z0-9_-]*$", username, re.IGNORECASE):
+        raise ValueError(f"invalid username: {username}")
     dest = dest_path or DISPATCHER_PATH
     dest.parent.mkdir(parents=True, exist_ok=True)
     content = _TEMPLATE.format(username=username)

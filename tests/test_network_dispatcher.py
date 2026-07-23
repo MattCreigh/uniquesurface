@@ -137,3 +137,15 @@ def test_install_without_wake_system_uses_default_template(
     )
     timer_text = tmr.read_text()
     assert "WakeSystem" not in timer_text
+
+
+def test_install_network_dispatcher_invalid_username(tmp_path: Path) -> None:
+    """install_network_dispatcher_script raises ValueError for invalid
+    username pattern.
+    """
+    from trinity.systemd.network_dispatcher import install_network_dispatcher_script
+
+    dest = tmp_path / "disp.sh"
+    for bad in ("user name", "user;inject", "matt&", "1user", "-user"):
+        with pytest.raises(ValueError):
+            install_network_dispatcher_script(bad, dest_path=dest)
