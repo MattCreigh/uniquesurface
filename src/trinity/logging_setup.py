@@ -6,7 +6,7 @@ JSON logs go to stdout and are captured by the systemd journal
 This module is named ``logging_setup`` rather than ``logging`` to avoid
 shadowing the stdlib ``logging`` module.  The previous name worked (absolute
 imports win) but confused tooling and readers.  No compatibility shim is
-provided — this is a 0.1.0 application, not a library API.
+provided — this is an application, not a library API.
 """
 
 from __future__ import annotations
