@@ -437,11 +437,25 @@ def apply_to_surfaces(
     user_dir = Path(expanded.surface.behaviour.user_dir).expanduser()
     shared_dir = Path(expanded.surface.behaviour.shared_dir)
 
+    from trinity.providers import get_provider_options_schema, make_plugin_manager
+
     # Inject temporal offset into provider options for cyclical
     # provisioning (trinity cycle).  The offset is not persisted to
     # config.toml — it lives in refresh_state.json and is applied
     # per-run so the base config stays authoritative.
     if temporal_offset > 0:
+        from trinity.cli import CLIError
+        from trinity.exit_codes import EXIT_USAGE
+
+        pm = make_plugin_manager()
+        provider_name = expanded.surface.source.provider
+        schema = get_provider_options_schema(pm, provider_name)
+        if schema is None or "index" not in schema.model_fields:
+            raise CLIError(
+                f"provider '{provider_name}' does not support temporal cycling",
+                status=EXIT_USAGE,
+            )
+
         from trinity.schema import Source, SourceOptions
 
         mutated_options = dict(expanded.surface.source.options.model_dump())
@@ -452,7 +466,7 @@ def apply_to_surfaces(
                 "surface": expanded.surface.model_copy(
                     update={
                         "source": Source(
-                            provider=expanded.surface.source.provider,
+                            provider=provider_name,
                             options=SourceOptions(**mutated_options),
                         )
                     }

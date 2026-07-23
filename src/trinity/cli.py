@@ -258,20 +258,26 @@ def apply(
             err=True,
         )
 
+    from trinity.backends.base import BackendError
+    from trinity.providers import ProviderError
+
     manifest = Manifest()
     from trinity.orchestrator import _apply_lock, _noop_lock
 
     user_dir = Path(cfg.surface.behaviour.user_dir).expanduser()
     lock_cm = _apply_lock(user_dir) if not dry_run else _noop_lock()
     with lock_cm:
-        plan = apply_to_surfaces(
-            cfg,
-            manifest=manifest,
-            dry_run=dry_run,
-            adopt_drift=adopt_drift,
-            restart_dm=restart_dm,
-            if_changed=if_changed,
-        )
+        try:
+            plan = apply_to_surfaces(
+                cfg,
+                manifest=manifest,
+                dry_run=dry_run,
+                adopt_drift=adopt_drift,
+                restart_dm=restart_dm,
+                if_changed=if_changed,
+            )
+        except (ProviderError, BackendError) as exc:
+            raise CLIError(str(exc)) from exc
     for line in plan:
         click.echo(line)
     # The orchestrator already emits a precise "restart <dm>" or
@@ -845,6 +851,16 @@ def cycle(offset: int | None, dry_run: bool, config_path: Path | None) -> None:
             hint="run `trinity config validate` after fixing the file",
         ) from exc
 
+    from trinity.providers import get_provider_options_schema, make_plugin_manager
+    pm = make_plugin_manager()
+    schema = get_provider_options_schema(pm, cfg.surface.source.provider)
+    if schema is None or "index" not in schema.model_fields:
+        p_name = cfg.surface.source.provider
+        raise CLIError(
+            f"provider '{p_name}' does not support temporal cycling",
+            status=EXIT_USAGE,
+        )
+
     # Determine the target offset.
     user_dir = Path(cfg.surface.behaviour.user_dir).expanduser()
     state_file = user_dir / STATE_FILENAME
@@ -857,13 +873,19 @@ def cycle(offset: int | None, dry_run: bool, config_path: Path | None) -> None:
 
     click.echo(f"cycle: offset {target_offset} (was {current_offset})")
 
+    from trinity.backends.base import BackendError
+    from trinity.providers import ProviderError
+
     manifest = Manifest()
-    plan = apply_to_surfaces(
-        cfg,
-        manifest=manifest,
-        dry_run=dry_run,
-        temporal_offset=target_offset,
-    )
+    try:
+        plan = apply_to_surfaces(
+            cfg,
+            manifest=manifest,
+            dry_run=dry_run,
+            temporal_offset=target_offset,
+        )
+    except (ProviderError, BackendError) as exc:
+        raise CLIError(str(exc)) from exc
     for line in plan:
         click.echo(line)
 

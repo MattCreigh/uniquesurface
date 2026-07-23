@@ -50,7 +50,9 @@ def _make_config(tmp_path: Path, clock_enabled: bool = True) -> Config:
 def test_orchestrator_clock_position_lands(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Drives apply_to_surfaces end-to-end with clock_position.enabled=true against a fixture Login.qml."""
+    """Drives apply_to_surfaces end-to-end with clock_position.enabled=true
+    against a fixture Login.qml.
+    """
     templates = tmp_path / "templates"
     templates.mkdir()
     monkeypatch.setattr(paths, "templates_dir", lambda: templates)
@@ -102,10 +104,14 @@ Item {
         plan = apply_to_surfaces(cfg, manifest=Manifest(), dry_run=False)
 
     # Assert plan reports success
-    assert any("QML clock 'sddm_login': clock_position: applied" in line for line in plan)
+    assert any(
+        "QML clock 'sddm_login': clock_position: applied" in line
+        for line in plan
+    )
 
     # Assert alignment landed in the fork theme directory
-    patched_content = (sddm_fork.FORK_THEME_DIR / "Login.qml").read_text(encoding="utf-8")
+    fork_file = sddm_fork.FORK_THEME_DIR / "Login.qml"
+    patched_content = fork_file.read_text(encoding="utf-8")
     assert "Layout.alignment: Qt.AlignTop | Qt.AlignLeft" in patched_content
 
 
@@ -152,7 +158,9 @@ Item {
     )
 
     # Mock qmllint to return fail so revert triggers
-    fake_lint = QmlLintResult(ok=False, stdout="", stderr="invalid QML syntax", timed_out=False)
+    fake_lint = QmlLintResult(
+        ok=False, stdout="", stderr="invalid QML syntax", timed_out=False
+    )
 
     cfg = _make_config(tmp_path, clock_enabled=True)
 
@@ -167,5 +175,6 @@ Item {
     assert any("LINT FAILED; reverted to pristine" in line for line in plan)
 
     # Assert the file is restored to pristine (login_qml_content)
-    restored_content = (sddm_fork.FORK_THEME_DIR / "Login.qml").read_text(encoding="utf-8")
+    fork_file = sddm_fork.FORK_THEME_DIR / "Login.qml"
+    restored_content = fork_file.read_text(encoding="utf-8")
     assert restored_content == login_qml_content

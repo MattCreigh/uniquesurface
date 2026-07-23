@@ -257,3 +257,52 @@ def test_cycle_cli_dry_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
     result = runner.invoke(main, ["cycle", "--offset", "2", "--dry-run"])
     assert result.exit_code == 0, result.output
     assert "offset 2" in result.output
+
+
+def test_cycle_unsupported_providers_raise_clierror(tmp_path: Path) -> None:
+    """apply_to_surfaces with unsupported providers and temporal_offset
+    raises CLIError.
+    """
+    from trinity.cli import CLIError
+
+    for provider in ("solid", "file", "json-api"):
+        cfg = _make_cycle_config(tmp_path, provider=provider)
+        with pytest.raises(CLIError) as excinfo:
+            apply_to_surfaces(
+                cfg, manifest=Manifest(), dry_run=False, temporal_offset=2
+            )
+        assert "does not support temporal cycling" in str(excinfo.value)
+        assert excinfo.value.status == 2
+
+
+def test_cycle_cli_unsupported_provider_exits_2(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """trinity cycle CLI with unsupported provider exits 2."""
+    cfg_dir = tmp_path / "xdg_config" / "trinity"
+    cfg_dir.mkdir(parents=True, exist_ok=True)
+    shared = str(tmp_path / "shared")
+    user_state = str(tmp_path / "user")
+    config_path = cfg_dir / "config.toml"
+    config_path.write_text(
+        f"""[surface]
+schema_version = 1
+[surface.source]
+provider = "solid"
+[surface.behaviour]
+shared_dir = "{shared}"
+user_dir = "{user_state}"
+"""
+    )
+
+    from trinity import paths
+    monkeypatch.setattr(paths, "config_file", lambda: config_path)
+    monkeypatch.setattr(paths, "manifest_file", lambda: tmp_path / "manifest.jsonl")
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["cycle", "--offset", "2"])
+    from trinity.cli import CLIError
+    assert isinstance(result.exception, CLIError)
+    assert result.exception.status == 2
+    assert "does not support temporal cycling" in str(result.exception)
