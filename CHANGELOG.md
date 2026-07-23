@@ -4,6 +4,25 @@ All notable changes to `trinity` are documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/) and this project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.3.1] — 2026-07-23
+
+Golden-master remediation release: closes the defects found in the
+post-0.3.0 audit. No new features; behaviour-compatible with 0.3.0
+except where a documented feature was previously inert.
+
+### Fixed
+
+- **HIGH-1 — clock-position patching is now wired into the apply pipeline.** `apply_clock_position_tokens` was implemented, schema-validated, and unit-tested in 0.3.0 but never called by the orchestrator, so `[surface.theme_tokens.clock_position]` did nothing. It now runs during `apply` (per-target clock id), routed through the manifest and the qmllint fail-closed gate, and respects `--dry-run`.
+- **HIGH-2 — `trinity cycle` no longer crashes on non-indexed providers.** The temporal offset is now injected only for providers whose options schema declares `index`; `solid`/`file`/`json-api` cycle requests raise a clean `CLIError` (exit 2) instead of an unhandled Pydantic `ValidationError`. `cli.cycle` and `cli.apply` wrap the pipeline so provider/backend failures surface as graceful errors, never as "unexpected error".
+- **MEDIUM-3 — Go GUI control plane hardened.** `/api/*` endpoints enforce POST (405 otherwise), validate the `Host` header (421 on mismatch), require a per-process bearer token, and the server sets `ReadHeaderTimeout`/`ReadTimeout`/`WriteTimeout`/`IdleTimeout`.
+- **MEDIUM-4 — compiled binary removed from version control.** `gui/trinity-gui` is untracked and `.gitignore`d, along with `*.deb`, `/dist/`, and build artifacts.
+- **LOW-5a** — removed the redundant, format-mismatched `refresh_state.cycle_token`; the offset token has a single definition in the orchestrator.
+- **LOW-5b** — dropped the stale hardcoded version from the `logging_setup` docstring.
+- **LOW-5c** — `apply` computes the lock `user_dir` via `expand_behaviour_paths`, so `$VAR` in `user_dir` resolves consistently for lock acquisition.
+- **LOW-5d** — the NetworkManager dispatcher validates the target username (`^[a-z_][a-z0-9_-]*$`) before templating it into the script.
+- **LOW-5e** — `verify_image` saves and restores `Image.MAX_IMAGE_PIXELS` instead of mutating the PIL global permanently.
+- **LOW-5f** — `manifest.restore` writes snapshots back with mode `0o644` and, under sudo, restores the invoking user's ownership.
+
 ## [0.3.0] — 2026-07-22
 
 ### Added — Features
