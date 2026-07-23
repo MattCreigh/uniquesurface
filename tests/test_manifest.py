@@ -113,6 +113,43 @@ def test_restore_unwrites_to_previous_bytes(tmp_path: Path) -> None:
     assert target.read_bytes() == b"ORIGINAL"
 
 
+def test_restore_sets_mode_and_owner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """manifest.restore restores files with 0644 mode and ownership under sudo."""
+    log = tmp_path / "manifest.jsonl"
+    snaps = tmp_path / "snaps"
+    m = manifest.Manifest(log)
+
+    target = tmp_path / "thing.bin"
+    target.write_bytes(b"ORIGINAL")
+    manifest.write_tracked(m, target, b"FIRST", snapshots_dir=snaps)
+
+    # Set fake SUDO_UID and SUDO_GID
+    monkeypatch.setenv("SUDO_UID", "1000")
+    monkeypatch.setenv("SUDO_GID", "1000")
+
+    # Mock os.chown to capture the calls
+    chown_calls = []
+
+    def fake_chown(path, uid, gid):
+        chown_calls.append((path, uid, gid))
+
+    monkeypatch.setattr(os, "chown", fake_chown)
+
+    count = manifest.restore(m)
+    assert count == 1
+    assert target.read_bytes() == b"ORIGINAL"
+
+    # Verify mode is 0644
+    mode = target.stat().st_mode & 0o777
+    assert mode == 0o644
+
+    # Verify chown was called with correct invoking user IDs
+    assert len(chown_calls) == 1
+    assert chown_calls[0] == (target, 1000, 1000)
+
+
 def test_restore_handles_entry_where_target_did_not_exist(tmp_path: Path) -> None:
     log = tmp_path / "manifest.jsonl"
     m = manifest.Manifest(log)

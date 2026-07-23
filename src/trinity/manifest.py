@@ -288,7 +288,14 @@ def restore(
         if entry.op == "write":
             if entry.prev_bytes_path and Path(entry.prev_bytes_path).exists():
                 prev_data = Path(entry.prev_bytes_path).read_bytes()
-                atomic_write_bytes(target, prev_data)
+                atomic_write_bytes(target, prev_data, mode=0o644)
+                sudo_uid = os.environ.get("SUDO_UID")
+                sudo_gid = os.environ.get("SUDO_GID")
+                if sudo_uid and sudo_gid:
+                    try:
+                        os.chown(target, int(sudo_uid), int(sudo_gid))
+                    except OSError:
+                        pass
                 count += 1
             elif entry.prev_sha256 is None:
                 # No previous content existed; remove the file we wrote.
