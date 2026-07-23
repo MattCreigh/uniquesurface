@@ -52,3 +52,9 @@ htmlcov/
 
 # Local-only files that may be dropped in the project root.
 mesh-lan-CA.crt
+
+# Compiled binaries and build artifacts
+gui/trinity-gui
+/dist/
+*.deb
+plasma-*
